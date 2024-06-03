@@ -17,33 +17,18 @@ fn deserialize() {
 	assert!(file.next().is_none());
 	assert_eq!(chunk.files.len(), 10);
 	for file in &chunk.files {
-	println!("
-	pub voice_id   : {},
-	pub flags      : {},
-	   _reserved1  : {},
-	   _reserved2  : {},
-	   _reserved3  : {},
-	   _reserved4  : {},
-	pub length     : {},
-	pub offset     : {},
-	   _reserved5  : {},
-	   _reserved6  : {},
-	   _reserved7  : {},
-	   _reserved8  : {},
-		 data: {:x?}", 
-		 file. voice_id ,
-		 file. flags    ,
-				file._reserved1,
-				file._reserved2,
-				file._reserved3,
-				file._reserved4,
-		 file. length   ,
-		 file. offset   ,
-				file._reserved5,
-				file._reserved6,
-				file._reserved7,
-				file._reserved8,
-				&file.audio_data[..32]
-	);
-}
+		let inner_file = &mut dut::pf::PackFileReader::<dut::formats::ASND>::from_bytes(file.audio_data).map_err(|e| e.to_string()).unwrap();
+		for (i, chunk) in inner_file.enumerate() {
+			let chunk = chunk.unwrap();
+
+			let mp3 = chunk.audio_data;
+			if &mp3[..2] != &[0xff, 0xfb] {
+				println!("{:#?} unknown format {:x?}", chunk, &mp3[..2]);
+			}
+			
+			let dst_file = &mut std::fs::File::options().create(true).truncate(true).write(true).open(format!("tests/out/{}_{}.mp3", file.voice_id, i)).unwrap();
+			use std::io::Write;
+			dst_file.write_all(mp3).unwrap();
+		}
+	}
 }
