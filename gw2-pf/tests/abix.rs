@@ -12,8 +12,7 @@ fn deserialize() {
 		v
 	};
 
-	use dut::pf::PackFile;
-	let parsed = dut::formats::abix::ABIX::from_bytes(&data).map_err(|e| e.to_string()).unwrap();
+	let file = &mut dut::pf::PackFileReader::<dut::formats::ABIX>::from_bytes(&data).map_err(|e| e.to_string()).unwrap();
 
 	fn to_id(_str : &dut::wstr::WString) -> u32 { //TODO @temp hackery for the trivial test
 		if _str.0.is_empty() {
@@ -23,8 +22,10 @@ fn deserialize() {
 		}
 	}
 
-	assert_eq!(parsed.chunks[0].bank_language.len(), 6);
-	assert_eq!(parsed.chunks[0].bank_language[0].bank_file_name.len(), 43769);
-	assert_eq!(to_id(parsed.chunks[0].bank_language[0].bank_file_name[0].file_name.as_ref().unwrap()), 157442);
-	assert_eq!(to_id(parsed.chunks[0].bank_language[0].bank_file_name[1000].file_name.as_ref().unwrap()), 0);
+	let chunk = file.next().unwrap().map_err(|e| e.to_string()).unwrap();
+
+	assert_eq!(chunk.bank_language.len(), 6);
+	assert_eq!(chunk.bank_language[0].bank_file_name.len(), 43769);
+	assert_eq!(to_id(chunk.bank_language[0].bank_file_name[0].file_name.as_ref().unwrap()), 157442);
+	assert_eq!(to_id(chunk.bank_language[0].bank_file_name[1000].file_name.as_ref().unwrap()), 0);
 }

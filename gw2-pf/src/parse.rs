@@ -7,6 +7,7 @@ pub enum Error {
 	DataTooShort,
 	CannotFindNullTerminator,
 	UnknownVersion{ actual : u16 },
+	UnknownMagic{ actual : u32 },
 }
 
 impl std::fmt::Display for Error {
@@ -106,3 +107,8 @@ impl<T : Parse> Parse for Vec<T> {
 pub trait ParseVersioned : Sized {
 	fn parse(version : u16, input : &mut Input) -> Result<Self>;
 }
+
+pub trait ParseMagicVariant : Sized {
+	fn parse(magic : u32, version : u16, input : &mut Input) -> Result<Self>;
+}
+
