@@ -35,7 +35,6 @@ impl<'inp, C : Magic + ParseMagicVariant> Iterator for PackFileReader<'inp, C> {
 }
 
 #[repr(C)]
-#[derive(serde::Deserialize)]
 pub struct PFHeader {
 	pub magic       : u16,
 	pub version     : u16,
@@ -53,7 +52,6 @@ pub trait Magic : Sized {
 }
 
 #[repr(C)]
-#[derive(serde::Deserialize)]
 pub struct ChunkHeader {
 	pub magic             : u32,
 	pub next_chunk_offset : u32,
