@@ -1,5 +1,3 @@
-//todo parseinto
-
 #[derive(Debug)]
 pub enum Error {
 	InvalidFileType{ r#type : &'static str, expected : u32, actual : u32 },
@@ -45,7 +43,30 @@ impl std::error::Error for Error {}
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+pub struct BinarySize {
+	pub fixed_bytes : usize,
+	pub ptrs : usize,
+	pub is_dynamic : bool,
+}
+
+impl BinarySize {
+	pub const fn fixed(fixed_bytes : usize) -> Self { Self { fixed_bytes, ptrs: 0, is_dynamic: false }}
+	pub const fn ptrs(ptrs : usize) -> Self { Self { fixed_bytes: 0, ptrs, is_dynamic: false }}
+	pub const fn dynamic() -> Self { Self { fixed_bytes: 0, ptrs: 0, is_dynamic: true }}
+	pub const fn add(&self, rhs : &Self) -> Self { Self {
+		fixed_bytes: self.fixed_bytes + rhs.fixed_bytes,
+		ptrs: self.ptrs + rhs.ptrs,
+		is_dynamic: self.is_dynamic | rhs.is_dynamic,
+	}}
+
+	pub const fn actual_size(&self, uses_64_bit_ptrs : bool) -> Option<usize> {
+		if self.is_dynamic { return None }
+		Some(self.fixed_bytes + self.ptrs * if uses_64_bit_ptrs { 8 } else { 4 })
+	}
+}
+
 pub trait Parse<'inp> : Sized {
+	const BINARY_SIZE : BinarySize;
 	fn parse(input : &mut Input<'inp>) -> Result<Self>;
 }
 
@@ -75,11 +96,12 @@ impl Input<'_> {
 macro_rules! impl_le_bit_prase {
 	($($type:ty),*) => {$(
 		impl<'inp> Parse<'inp> for $type {
+			const BINARY_SIZE : BinarySize = BinarySize::fixed(std::mem::size_of::<$type>());
 			fn parse(input : &mut Input<'inp>) -> Result<Self> {
-				const SIZE : usize = std::mem::size_of::<$type>();
-				if input.remaining.len() < SIZE { return Err(Error::to_short::<$type>(input.remaining.len())) }
-				let v = <$type>::from_le_bytes(input.remaining[..SIZE].try_into().unwrap());
-				input.remaining = &input.remaining[SIZE..];
+				const BINARY_SIZE : usize = std::mem::size_of::<$type>();
+				if input.remaining.len() < BINARY_SIZE { return Err(Error::to_short::<$type>(input.remaining.len())) }
+				let v = <$type>::from_le_bytes(input.remaining[..BINARY_SIZE].try_into().unwrap());
+				input.remaining = &input.remaining[BINARY_SIZE..];
 				Ok(v)
 			}
 		}
@@ -93,6 +115,7 @@ impl_le_bit_prase! {
 }
 
 impl<'inp, T : Parse<'inp>> Parse<'inp> for Option<T> {
+	const BINARY_SIZE : BinarySize = BinarySize::ptrs(1);
 	fn parse(input : &mut Input<'inp>) -> Result<Self> {
 		let offset = input.eat_offset()?;
 		if offset == 0 { Ok(None) }
@@ -101,11 +124,13 @@ impl<'inp, T : Parse<'inp>> Parse<'inp> for Option<T> {
 }
 
 impl<'inp, T : Parse<'inp>> Parse<'inp> for Vec<T> {
+	const BINARY_SIZE : BinarySize = BinarySize{ fixed_bytes: 4, ptrs: 1, is_dynamic: false };
 	fn parse(input : &mut Input<'inp>) -> Result<Self> {
 		let length = u32::parse(input)? as usize;
 		let offset = input.eat_offset()?;
 		match length {
 			0 => Ok(vec![]),
+			//todo length check
 			mut length => {
 				let vec_input = &mut input.clone_with_offset(offset)?;
 
@@ -121,7 +146,35 @@ impl<'inp, T : Parse<'inp>> Parse<'inp> for Vec<T> {
 	}
 }
 
+pub fn parse_null_terminated_vec<'inp, T : Parse<'inp>>(input : &mut Input<'inp>) -> Result<Vec<T>> {
+	let length = u32::parse(input)? as usize;
+	let offset = input.eat_offset()?;
+	match length { 
+		0 => Ok(vec![]),
+		//todo length check
+		mut length => {
+			let vec_input = &mut input.clone_with_offset(offset)?;
+
+			let mut vec = Vec::with_capacity(length);
+			while length > 0 {
+				//todo test during macro expansion
+				if let Some(el_size) = T::BINARY_SIZE.actual_size(input.is_64_bit) {
+					if vec_input.remaining.len() < el_size { return Err(Error::to_short::<T>(vec_input.remaining.len())); }
+
+					if vec_input.remaining[..el_size].iter().all(|b| *b == 0) { break }
+				}
+
+				vec.push(T::parse(vec_input)?);
+				length -= 1;
+			}
+
+			Ok(vec)
+		}
+	}
+}
+
 impl<'inp> Parse<'inp> for &'inp [u8] {
+	const BINARY_SIZE : BinarySize = BinarySize{ fixed_bytes: 4, ptrs: 1, is_dynamic: false };
 	fn parse(input : &mut Input<'inp>) -> Result<Self> {
 		let length = u32::parse(input)? as usize;
 		let offset = input.eat_offset()?;

@@ -4,7 +4,7 @@ use syn::{parse::Parse, parse_macro_input, punctuated::Punctuated, spanned::Span
 
 
 
-#[proc_macro_derive(Parse, attributes(versioned_chunk, v, packfile, ))]
+#[proc_macro_derive(Parse, attributes(versioned_chunk, v, packfile, null_terminated))]
 pub fn derive_parse(input : TokenStream) -> TokenStream {
 	let DeriveInput { ident: root_ident, data, attrs, generics: root_generics, .. } = parse_macro_input!(input);
 
@@ -36,15 +36,7 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 	
 	let output2 = match data {
 		syn::Data::Struct(_struct) => {
-			let Fields::Named(fields) = _struct.fields else { panic!() };
-			let fields = fields.named.iter().map(|f| {
-				let ident = f.ident.as_ref().unwrap();
-				let span = f.ty.span();
-				quote_spanned!(span => #ident: Parse::parse(input)?)
-			});
-
 			let mut err = proc_macro2::TokenStream::new();
-
 			for attr in attrs {
 				if let syn::Meta::Path(meta) = attr.meta {
 					if meta.is_ident("versioned_chunk") {
@@ -53,12 +45,51 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 					else if meta.is_ident("packfile") {
 						err.extend(syn::Error::new(meta.span(), "versioned_chunk is only valid for enums").into_compile_error())
 					}
+					else if meta.is_ident("null_terminated") {
+						err.extend(syn::Error::new(meta.span(), "null_terminated is only valid for struct members").into_compile_error())
+					}
 				}
 			}
+
+			let Fields::Named(fields) = _struct.fields else { panic!() };
+
+			
+
+			let mut sizes = Vec::with_capacity(fields.named.len());
+			for field in &fields.named {
+				let _type = &field.ty;
+				let span = field.ty.span();
+				// todo strip lifetimes instead of wraping in triangle brackets
+				sizes.push(quote_spanned!(span => <#_type>::BINARY_SIZE));
+			}
+			let sizes = match sizes.len() {
+				0 => proc_macro2::TokenStream::new(),
+				1 => sizes.into_iter().next().unwrap(),
+				_ => {
+					let first = &sizes[0];
+					let sizes = sizes.iter().skip(1).map(|t| quote!{ .add(&#t) });
+					quote!{ #first #(#sizes)* }
+				}
+			};
+			
+
+			let fields = fields.named.iter().map(|f| {
+				let ident = f.ident.as_ref().unwrap();
+				let span = f.ty.span();
+
+				if f.attrs.iter().any(|attr| attr.meta.path().is_ident("null_terminated")) {
+					quote_spanned!(span => #ident: crate::parse::parse_null_terminated_vec(input)?)
+				}
+				else {
+					quote_spanned!(span => #ident: Parse::parse(input)?)
+				}
+			});
+
 
 			quote! {
 				#[automatically_derived]
 				impl #input_lt crate::parse::Parse #input_lt for #root_ident #root_generics {
+					const BINARY_SIZE : crate::parse::BinarySize = #sizes;
 					fn parse(input : &mut crate::parse::Input #input_lt) -> Result<Self, crate::parse::Error> {
 						use crate::parse::Parse;
 						Ok(Self {

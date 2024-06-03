@@ -4,6 +4,7 @@ pub struct BankFileData<'a> {
 	   _reserved2     : u32,
 	   _reserved3     : u32,
 	   _reserved4     : u32,
+	#[null_terminated]
 	pub files         : Vec<ASNDFile<'a>>,
 	   _reserved_data : u32,
 }

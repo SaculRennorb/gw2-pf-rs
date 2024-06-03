@@ -4,6 +4,7 @@ use crate::parse::{Input, Parse, Error};
 pub struct WString(pub Vec<u16>);
 
 impl<'inp> Parse<'inp> for WString {
+	const BINARY_SIZE : crate::parse::BinarySize = crate::parse::BinarySize::dynamic(); // todo hmmm
 	fn parse(input : &mut Input<'inp>) -> crate::parse::Result<Self> {
 		let u16slice = unsafe { std::slice::from_raw_parts(input.remaining.as_ptr().cast::<u16>(), input.remaining.len() / 2) };
 		match u16slice.iter().position(|c| *c == 0) {
