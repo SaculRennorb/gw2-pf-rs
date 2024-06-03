@@ -1,4 +1,4 @@
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, crate::Parse)]
 pub struct WaveformData {
 	pub length        : f32,
 	pub offset        : f32,

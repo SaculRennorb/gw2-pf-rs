@@ -11,12 +11,12 @@ fn deserialize() {
 		v
 	};
 
-	use dut::pf::PackFile;
-	let parsed = dut::formats::abnk::ABNK::from_bytes(&data).map_err(|e| e.to_string()).unwrap();
+	let file = &mut dut::pf::PackFileReader::<dut::formats::ABNK>::from_bytes(&data).map_err(|e| e.to_string()).unwrap();
+	let chunk = file.next().unwrap().map_err(|e| e.to_string()).unwrap();
 
-	assert_eq!(parsed.chunks.len(), 1);
-	assert_eq!(parsed.chunks[0].files.len(), 10);
-	for file in &parsed.chunks[0].files {
+	assert!(file.next().is_none());
+	assert_eq!(chunk.files.len(), 10);
+	for file in &chunk.files {
 	println!("
 	pub voice_id   : {},
 	pub flags      : {},
