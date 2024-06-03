@@ -88,6 +88,9 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 							const MAGIC : u32 = crate::fcc(#chunk_magic);
 						}
 					};
+
+					derive_deref_if_only_one_variant(&mut result, &ident, &_enum);
+
 					break;
 				}
 				else if meta.is_ident("packfile") {
@@ -124,6 +127,9 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 							const MAGIC : u32 = crate::fcc(#own_magic);
 						}
 					};
+
+					derive_deref_if_only_one_variant(&mut result, &ident, &_enum);
+
 					break;
 				}
 			}
@@ -136,4 +142,24 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 	};
 	//panic!("{}", output);
 	output.into()
+}
+
+fn derive_deref_if_only_one_variant(output : &mut proc_macro2::TokenStream, ident : &syn::Ident, _enum : &syn::DataEnum) {
+	if _enum.variants.len() != 1 { return }
+
+	let only_variant = &_enum.variants[0];
+	let variant_ident = &only_variant.ident;
+	let variant_type = match only_variant.fields {
+			Fields::Unnamed(ref f) => &f.unnamed[0].ty,
+			_ => todo!(),
+	};
+
+	let _impl = quote! {
+		impl std::ops::Deref for #ident {
+			type Target = #variant_type;
+			fn deref(&self) -> &Self::Target { match self { Self::#variant_ident(ref s) => s } }
+		}
+	};
+
+	output.extend(_impl);
 }
