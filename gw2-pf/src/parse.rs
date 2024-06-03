@@ -2,24 +2,41 @@
 
 #[derive(Debug)]
 pub enum Error {
-	InvalidFileType{ expected : u32, actual : u32 },
+	InvalidFileType{ r#type : &'static str, expected : u32, actual : u32 },
 	NotSupported,
-	DataTooShort,
+	DataTooShort { r#type : Option<&'static str>, required : usize, actual : usize },
 	CannotFindNullTerminator,
-	UnknownVersion{ actual : u16 },
-	UnknownMagic{ actual : u32 },
+	UnknownVersion{ r#type : &'static str, actual : u16 },
+	UnknownMagic{ r#type : &'static str, actual : u32 },
+}
+
+impl Error {
+	pub fn to_short<T>(actual : usize) -> Self { Self::DataTooShort {
+		r#type: Some(std::any::type_name::<T>()), required: std::mem::size_of::<T>(), actual
+	}}
+
+	pub fn wrong_magic<T : crate::pf::Magic>(actual : u32) -> Self { Self::InvalidFileType {
+		r#type: std::any::type_name::<T>(), expected: T::MAGIC, actual
+	}} 
 }
 
 impl std::fmt::Display for Error {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
-				Error::InvalidFileType { ref expected, ref actual } => {
-					f.write_fmt(format_args!("Unexpected File Type: Expected: {}, Actual: {}", 
-						unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(std::ptr::from_ref(expected).cast(), 4)) },
-						unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(std::ptr::from_ref(actual).cast(), 4)) }
-					))
-				},
-				_ => f.write_fmt(format_args!("{:?}", self))
+			Error::DataTooShort { r#type, required, actual } => {
+				f.write_str("Data too short")?;
+				if let Some(r#type) = r#type {
+					f.write_fmt(format_args!(" for {}", r#type))?;
+				}
+				f.write_fmt(format_args!(": required: {required}, actual: {actual}"))
+			},
+			Error::InvalidFileType { r#type, expected, actual } => {
+				f.write_fmt(format_args!("Unexpected file type for {}: expected: {:x?} ({}), actual: {:x?} ({})", r#type,
+					&expected.to_le_bytes(), unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(std::ptr::from_ref(expected).cast(), 4)) },
+					&actual.to_le_bytes(), unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(std::ptr::from_ref(actual).cast(), 4)) }
+				))
+			},
+			_ => f.write_fmt(format_args!("{:?}", self))
 		}
 	}
 }
@@ -39,7 +56,7 @@ pub struct Input<'inp> {
 
 impl Input<'_> {
 	pub fn clone_with_offset(&self, offset : usize) -> Result<Self> {
-		if offset > self.remaining.len() { Err(Error::DataTooShort) }
+		if offset > self.remaining.len() { Err(Error::DataTooShort{ r#type: None, required: offset, actual: self.remaining.len() }) }
 		else { Ok(Self { remaining: &self.remaining[offset..], is_64_bit: self.is_64_bit }) }
 	}
 
@@ -60,7 +77,7 @@ macro_rules! impl_le_bit_prase {
 		impl<'inp> Parse<'inp> for $type {
 			fn parse(input : &mut Input<'inp>) -> Result<Self> {
 				const SIZE : usize = std::mem::size_of::<$type>();
-				if input.remaining.len() < SIZE { return Err(Error::DataTooShort) }
+				if input.remaining.len() < SIZE { return Err(Error::to_short::<$type>(input.remaining.len())) }
 				let v = <$type>::from_le_bytes(input.remaining[..SIZE].try_into().unwrap());
 				input.remaining = &input.remaining[SIZE..];
 				Ok(v)
@@ -110,7 +127,9 @@ impl<'inp> Parse<'inp> for &'inp [u8] {
 		let offset = input.eat_offset()?;
 		match length { 
 			0 => Ok(&[]),
-			length if input.remaining.len() < offset + length => Err(Error::DataTooShort),
+			length if input.remaining.len() < offset + length => Err(Error::DataTooShort {
+				r#type: Some(std::any::type_name::<Self>()), required: length, actual: input.remaining.len(),
+			}),
 			length => Ok(&input.remaining[offset..][..length]),
 		}
 	}

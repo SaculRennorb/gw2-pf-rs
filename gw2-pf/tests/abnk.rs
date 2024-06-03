@@ -32,3 +32,37 @@ fn deserialize() {
 		}
 	}
 }
+
+
+#[test]
+fn print_type() {
+	for path in std::fs::read_dir("tests/res").unwrap() {
+		let path = path.unwrap();
+		if path.file_type().unwrap().is_dir() { continue }
+		let filename = path.file_name();
+		let filename = filename.to_str().unwrap();
+		if !filename.ends_with(".abnk") { continue }
+		println!("{filename}");
+
+		let data = {
+			let mut file = File::open(format!("tests/res/{filename}")).unwrap();
+			let mut v = Vec::new();
+			file.read_to_end(&mut v).unwrap();
+			v
+		};
+
+		let file = &mut dut::pf::PackFileReader::<dut::formats::ABNK>::from_bytes(&data).map_err(|e| e.to_string()).unwrap();
+		for chunk in file {
+			let abnk = chunk.unwrap();
+
+			for asnd_file in &abnk.files {
+				let inner_file = &mut dut::pf::PackFileReader::<dut::formats::ASND>::from_bytes(asnd_file.audio_data).map_err(|e| e.to_string()).unwrap();
+				for chunk in inner_file {
+					let asnd = chunk.unwrap();
+
+					println!("OFlg: {:b}, IFlg: {:b}, Form: {}, Bytes: {:x?}", asnd_file.flags, asnd.flags, asnd.format, &asnd.audio_data[..2]);
+				}
+			}
+		}
+	}
+}

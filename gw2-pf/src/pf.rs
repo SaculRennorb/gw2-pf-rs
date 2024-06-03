@@ -7,9 +7,11 @@ pub struct PackFileReader<'inp, C : Magic + ParseMagicVariant<'inp>> {
 
 impl<'inp, F : Magic + ParseMagicVariant<'inp>> PackFileReader<'inp, F> {
 	pub fn from_bytes(bytes : &'inp [u8]) -> Result<Self> {
+		if bytes.len() < std::mem::size_of::<PFHeader>() { return Err(Error::to_short::<PFHeader>(bytes.len())) }
+
 		let header : PFHeader = unsafe{ std::ptr::read(bytes.as_ptr().cast()) };
-		if header.magic != PF_MAGIC { return Err(Error::InvalidFileType { expected: PF_MAGIC as u32, actual: header.magic as u32 }); }
-		if header.file_type != F::MAGIC { return Err(Error::InvalidFileType { expected: F::MAGIC, actual: header.file_type }) }
+		if header.magic != PF_MAGIC { return Err(Error::InvalidFileType { r#type: std::any::type_name::<PFHeader>(), expected: PF_MAGIC as u32, actual: header.magic as u32 }); }
+		if header.file_type != F::MAGIC { return Err(Error::wrong_magic::<F>(header.file_type)) }
 
 		let input = Input{ remaining: &bytes[header.header_size as usize..], is_64_bit: header.flags & PF_FLAG_HAS_64BIT_PTRS != 0 };
 

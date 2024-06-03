@@ -104,7 +104,7 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 								use crate::parse::Parse;
 								match version {
 									#(#fields),*,
-									_ => Err(crate::parse::Error::UnknownVersion { actual: version }),
+									_ => Err(crate::parse::Error::UnknownVersion { r#type: std::any::type_name::<#root_ident>(), actual: version }),
 								}
 							}
 						}
@@ -146,7 +146,7 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 								use crate::parse::ParseVersioned;
 								match magic {
 									#(#fields),*,
-									_ => Err(crate::parse::Error::UnknownMagic { actual: magic }),
+									_ => Err(crate::parse::Error::UnknownMagic { r#type: std::any::type_name::<#root_ident>(), actual: magic }),
 								}
 							}
 						}
