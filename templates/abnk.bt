@@ -1,0 +1,141 @@
+//------------------------------------------------
+//--- 010 Editor v11.0 Binary Template
+//
+//      File: 
+//   Authors: 
+//   Version: 
+//   Purpose: 
+//  Category: 
+// File Mask: 
+//  ID Bytes: 
+//   History: 
+//------------------------------------------------
+typedef uint64 u64;
+typedef uint32 u32;
+typedef uint16 u16;
+typedef ubyte  u8;
+typedef int64  i64;
+typedef int32  i32;
+typedef int16  i16;
+typedef byte   i8;
+typedef float  f32;
+typedef double f64;
+
+
+struct Array {
+    u32 length;
+    u32 offset <format=hex>;
+};
+
+struct Ptr {
+    u32 offset;
+};
+
+
+struct PFHeader {
+	char magic[2];
+	u16 version;
+	u16 _reserved <hidden=true>;
+	u16 header_size;
+	char file_type[4];
+};
+
+struct ChunkHeader {
+    char magic[4];
+    u32 next_chunk_offset <format=hex>;
+    u16 version;
+    u16 header_size;
+    u32 desciptor_offset <format=hex>;
+};
+
+
+PFHeader header <bgcolor=cGreen>;
+FSeek(startof(header) + header.header_size);
+
+ChunkHeader ch0 <bgcolor=cBlue>;
+FSeek(startof(ch0) + ch0.header_size);
+
+
+
+
+struct BankFileDatav2 {
+    u32 reserved;
+    u32 reserved;
+    u32 reserved;
+    u32 reserved;
+    Array asndFiles;
+    Ptr reservedData;
+} dat <bgcolor=cRed>;
+
+FSeek(startof(dat.asndFiles.offset) + dat.asndFiles.offset);
+
+local int i;
+for(i = 0; i < dat.asndFiles.length; i++) {
+
+struct ASNDFile {
+    u32 voiceId;
+    u32 flags <format=binary>;
+    u32 reserved;
+    u32 reserved;
+    u32 reserved;
+    u32 reserved;
+    f32 length;
+    f32 offset;
+    u8 reserved;
+    u8 reserved;
+    u8 reserved;
+    u8 reserved;
+    Array audio_data; //bytes
+} file;
+
+if(file.audio_data.length > 0) {
+    FSeek(startof(file.audio_data.offset) + file.audio_data.offset);
+    asnd_file(file.audio_data.length);
+    FSeek(startof(file) + sizeof(file));
+}
+
+}
+
+
+struct WaveformDataV2 {
+	f32 length;
+	f32 offset;
+	Ptr reservedData;
+	u32 reserved1;
+	u32 reserved2;
+	u32 crc;
+	u32 numSamples;
+	u32 loopStart;
+	u32 loopEnd;
+	u32 flags;
+	u8 format;
+	u8 reserved3;
+	u8 reserved4;
+	u8 reserved5;
+	u8 numChannels;
+	u8 reserved6;
+	u8 reserved7;
+	u8 reserved8;
+	Array audio_data; //byte
+	Array other_data; //byte
+};
+
+
+void asnd_file(int length) {
+    PFHeader header <bgcolor=cGreen>;
+    FSeek(startof(header) + header.header_size);
+
+    ChunkHeader ch0 <bgcolor=cBlue>;
+    FSeek(startof(ch0) + ch0.header_size);
+
+    WaveformDataV2 wfh;
+
+    FSeek(startof(wfh.audio_data.offset) + wfh.audio_data.offset);
+
+    struct {
+        char magic[2];
+        u8 d[wfh.audio_data.length - 2];
+    } d;
+
+}
+

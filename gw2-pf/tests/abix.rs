@@ -13,7 +13,7 @@ fn deserialize() {
 	};
 
 	use dut::pf::PackFile;
-	let parsed = dut::formats::bidx::BIDX::from_bytes(&data).map_err(|e| e.to_string()).unwrap();
+	let parsed = dut::formats::abix::ABIX::from_bytes(&data).map_err(|e| e.to_string()).unwrap();
 
 	fn to_id(_str : &dut::wstr::WString) -> u32 { //TODO @temp hackery for the trivial test
 		if _str.0.is_empty() {

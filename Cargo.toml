@@ -1,9 +1,7 @@
-[package]
-name = "gw2-pf-rs"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+resolver = "2"
+members = [
+	"gw2-pf",
+	"gw2-pf-derive",
+]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-serde = { version = "1.0.203", features = ["derive"] }

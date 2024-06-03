@@ -1,0 +1,8 @@
+[package]
+name = "gw2-pf-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gw2-pf-rs-derive = { path = "../gw2-pf-derive" }
+serde = { version = "1.0.203", features = ["derive"] }
