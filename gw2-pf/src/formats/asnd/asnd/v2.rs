@@ -1,5 +1,5 @@
 #[derive(Debug, crate::Parse)]
-pub struct WaveformData {
+pub struct WaveformData<'a> {
 	pub length        : f32,
 	pub offset        : f32,
 	   _reserved_data : u32, //ptr
@@ -18,6 +18,6 @@ pub struct WaveformData {
 	   _reserved6     : u8,
 	   _reserved7     : u8,
 	   _reserved8     : u8,
-	pub audio_data    : Vec<u8>,
-	pub other_data    : Vec<u8>,
+	pub audio_data    : &'a [u8],
+	pub other_data    : &'a [u8],
 }

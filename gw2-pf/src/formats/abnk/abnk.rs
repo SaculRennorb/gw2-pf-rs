@@ -3,6 +3,6 @@ pub mod bkck;
 
 #[derive(Debug, crate::Parse)]
 #[packfile]
-pub enum ABNK {
-	BKCK(bkck::BKCK),
+pub enum ABNK<'a> {
+	BKCK(bkck::BKCK<'a>),
 }

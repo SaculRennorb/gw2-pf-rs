@@ -1,14 +1,40 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
-use syn::{parse::Parse, parse_macro_input, spanned::Spanned, DeriveInput, Fields};
+use syn::{parse::Parse, parse_macro_input, punctuated::Punctuated, spanned::Spanned, DeriveInput, Fields};
 
 
 
-#[proc_macro_derive(Parse, attributes(versioned_chunk, v, packfile))]
+#[proc_macro_derive(Parse, attributes(versioned_chunk, v, packfile, ))]
 pub fn derive_parse(input : TokenStream) -> TokenStream {
-	let DeriveInput { ident, data, attrs, .. } = parse_macro_input!(input);
+	let DeriveInput { ident: root_ident, data, attrs, generics: root_generics, .. } = parse_macro_input!(input);
+
+	let mut output = proc_macro2::TokenStream::new();
+
+	let input_lt = {
+		let lt = ({
+			let mut candidate = None;
+			for param in root_generics.params.iter() {
+				let syn::GenericParam::Lifetime(ref _lt_param) = param else { continue };
+				match candidate {
+					None => {
+						candidate = Some(param.clone())
+					},
+					Some(ref _old) => {
+						// todo warning
+					},
+				}
+			}
+			candidate
+		}).unwrap_or_else(|| {
+			syn::GenericParam::Lifetime(syn::LifetimeParam::new(syn::Lifetime::new("'inp", root_ident.span())))
+		});
+
+		let mut params = Punctuated::new();
+		params.push_value(lt.clone());
+		syn::Generics { params,	..Default::default() }
+	};
 	
-	let output = match data {
+	let output2 = match data {
 		syn::Data::Struct(_struct) => {
 			let Fields::Named(fields) = _struct.fields else { panic!() };
 			let fields = fields.named.iter().map(|f| {
@@ -32,8 +58,8 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 
 			quote! {
 				#[automatically_derived]
-				impl crate::parse::Parse for #ident {
-					fn parse(input : &mut crate::parse::Input) -> Result<Self, crate::parse::Error> {
+				impl #input_lt crate::parse::Parse #input_lt for #root_ident #root_generics {
+					fn parse(input : &mut crate::parse::Input #input_lt) -> Result<Self, crate::parse::Error> {
 						use crate::parse::Parse;
 						Ok(Self {
 							#(#fields),*
@@ -59,22 +85,22 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 						};
 						let version = version_attr.parse_args_with(syn::LitInt::parse).unwrap();
 
-						let inner_type = match f.fields {
+						let tuple_field = match f.fields {
 							Fields::Unnamed(ref field) => {
 								field.unnamed.first().unwrap()
 							},
 							_ => todo!(),
 						};
-						let span = inner_type.span();
+						let span = tuple_field.span();
 						quote_spanned!(span => #version => Parse::parse(input).map(Self::#field_ident))
 					});
 
-					let chunk_magic = syn::LitByteStr::new(ident.to_string().as_bytes(), ident.span());
+					let own_magic = syn::LitByteStr::new(root_ident.to_string().as_bytes(), root_ident.span());
 
 					result = quote! {
 						#[automatically_derived]
-						impl crate::parse::ParseVersioned for #ident {
-							fn parse(version : u16, input : &mut crate::parse::Input) -> Result<Self, crate::parse::Error> {
+						impl #input_lt crate::parse::ParseVersioned #input_lt for #root_ident #root_generics {
+							fn parse(version : u16, input : &mut crate::parse::Input #input_lt) -> Result<Self, crate::parse::Error> {
 								use crate::parse::Parse;
 								match version {
 									#(#fields),*,
@@ -84,12 +110,12 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 						}
 
 						#[automatically_derived]
-						impl crate::pf::Magic for #ident {
-							const MAGIC : u32 = crate::fcc(#chunk_magic);
+						impl #root_generics crate::pf::Magic for #root_ident #root_generics {
+							const MAGIC : u32 = crate::fcc(#own_magic);
 						}
 					};
 
-					derive_deref_if_only_one_variant(&mut result, &ident, &_enum);
+					derive_deref_if_only_one_variant(&mut result, &root_ident, &root_generics, &_enum);
 
 					break;
 				}
@@ -102,17 +128,20 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 							},
 							_ => todo!(),
 						};
-						let inner_type = &tuple_field.ty;
+						let inner_type = match tuple_field.ty {
+							syn::Type::Path(ref p) => strip_lifetimes_from_path(&p.path.segments),
+							_ => panic!(),
+						};
 						let span = tuple_field.span();
 						quote_spanned!(span => #inner_type::MAGIC => ParseVersioned::parse(version, input).map(Self::#field_ident))
 					});
 
-					let own_magic = syn::LitByteStr::new(ident.to_string().as_bytes(), ident.span());
+					let own_magic = syn::LitByteStr::new(root_ident.to_string().as_bytes(), root_ident.span());
 
 					result = quote! {
 						#[automatically_derived]
-						impl crate::parse::ParseMagicVariant for #ident {
-							fn parse(magic : u32, version : u16, input : &mut crate::parse::Input) -> Result<Self, crate::parse::Error> {
+						impl #input_lt crate::parse::ParseMagicVariant #input_lt for #root_ident #root_generics {
+							fn parse(magic : u32, version : u16, input : &mut crate::parse::Input #input_lt) -> Result<Self, crate::parse::Error> {
 								use crate::pf::Magic;
 								use crate::parse::ParseVersioned;
 								match magic {
@@ -123,12 +152,12 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 						}
 
 						#[automatically_derived]
-						impl crate::pf::Magic for #ident {
+						impl #root_generics crate::pf::Magic for #root_ident #root_generics {
 							const MAGIC : u32 = crate::fcc(#own_magic);
 						}
 					};
 
-					derive_deref_if_only_one_variant(&mut result, &ident, &_enum);
+					derive_deref_if_only_one_variant(&mut result, &root_ident, &root_generics, &_enum);
 
 					break;
 				}
@@ -140,11 +169,45 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 			todo!()
 		},
 	};
+	output.extend(output2);
 	//panic!("{}", output);
 	output.into()
 }
 
-fn derive_deref_if_only_one_variant(output : &mut proc_macro2::TokenStream, ident : &syn::Ident, _enum : &syn::DataEnum) {
+type Path = Punctuated<syn::PathSegment, syn::token::PathSep>;
+fn strip_lifetimes_from_path(path : &Path) -> Path {
+	let mut new_path = Path::new();
+	for segment in path {
+		let arguments = match segment.arguments {
+			syn::PathArguments::AngleBracketed(ref generics) => {
+				let mut new_generics = Punctuated::<syn::GenericArgument, syn::token::Comma>::new();
+				for generic in &generics.args {
+					if matches!(generic, syn::GenericArgument::Lifetime(_)) { continue }
+					new_generics.push(generic.clone());
+				}
+				if new_generics.len() == 0 {
+					syn::PathArguments::None
+				}
+				else {
+					syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+						args        : new_generics,
+						colon2_token: generics.colon2_token,
+						gt_token    : generics.gt_token,
+						lt_token    : generics.lt_token,
+					})
+				}
+			},
+			_ => syn::PathArguments::None,
+		};
+		new_path.push(syn::PathSegment {
+			arguments,
+			ident: segment.ident.clone(),
+		});
+	}
+	new_path
+}
+
+fn derive_deref_if_only_one_variant(output : &mut proc_macro2::TokenStream, root_ident : &syn::Ident, root_generics : &syn::Generics, _enum : &syn::DataEnum) {
 	if _enum.variants.len() != 1 { return }
 
 	let only_variant = &_enum.variants[0];
@@ -155,7 +218,8 @@ fn derive_deref_if_only_one_variant(output : &mut proc_macro2::TokenStream, iden
 	};
 
 	let _impl = quote! {
-		impl std::ops::Deref for #ident {
+		#[automatically_derived]
+		impl #root_generics std::ops::Deref for #root_ident #root_generics {
 			type Target = #variant_type;
 			fn deref(&self) -> &Self::Target { match self { Self::#variant_ident(ref s) => s } }
 		}

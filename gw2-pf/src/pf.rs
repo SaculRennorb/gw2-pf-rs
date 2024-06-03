@@ -1,11 +1,11 @@
 use crate::parse::{Error, Input, ParseMagicVariant, Result};
 
-pub struct PackFileReader<'inp, C : Magic + ParseMagicVariant> {
+pub struct PackFileReader<'inp, C : Magic + ParseMagicVariant<'inp>> {
 	_p : std::marker::PhantomData<C>,
 	input : Input<'inp>,
 }
 
-impl<'inp, F : Magic + ParseMagicVariant> PackFileReader<'inp, F> {
+impl<'inp, F : Magic + ParseMagicVariant<'inp>> PackFileReader<'inp, F> {
 	pub fn from_bytes(bytes : &'inp [u8]) -> Result<Self> {
 		let header : PFHeader = unsafe{ std::ptr::read(bytes.as_ptr().cast()) };
 		if header.magic != PF_MAGIC { return Err(Error::InvalidFileType { expected: PF_MAGIC as u32, actual: header.magic as u32 }); }
@@ -17,7 +17,7 @@ impl<'inp, F : Magic + ParseMagicVariant> PackFileReader<'inp, F> {
 	}
 }
 
-impl<'inp, C : Magic + ParseMagicVariant> Iterator for PackFileReader<'inp, C> {
+impl<'inp, C : Magic + ParseMagicVariant<'inp>> Iterator for PackFileReader<'inp, C> {
 	type Item = crate::parse::Result<C>;
 
 	fn next(&mut self) -> Option<Self::Item> {
