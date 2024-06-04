@@ -1,38 +1,20 @@
-use crate::parse::{Error, Input, ParseMagicVariant, Result};
+use crate::parse::{Error, Input, ParseVersioned, Result};
 
-pub struct PackFileReader<'inp, C : Magic + ParseMagicVariant<'inp>> {
-	_p : std::marker::PhantomData<C>,
-	input : Input<'inp>,
+pub struct PackFileReader<'inp, F : Magic + ParseVersioned<'inp>> {
+	_p : std::marker::PhantomData<&'inp F>,
 }
 
-impl<'inp, F : Magic + ParseMagicVariant<'inp>> PackFileReader<'inp, F> {
-	pub fn from_bytes(bytes : &'inp [u8]) -> Result<Self> {
+impl<'inp, F : Magic + ParseVersioned<'inp>> PackFileReader<'inp, F> {
+	pub fn from_bytes(bytes : &'inp [u8]) -> Result<F::Output> {
 		if bytes.len() < std::mem::size_of::<PFHeader>() { return Err(Error::to_short::<PFHeader>(bytes.len())) }
 
-		let header : PFHeader = unsafe{ std::ptr::read(bytes.as_ptr().cast()) };
+		let header = unsafe{ bytes.as_ptr().cast::<PFHeader>().as_ref().unwrap() };
 		if header.magic != PF_MAGIC { return Err(Error::InvalidFileType { r#type: std::any::type_name::<PFHeader>(), expected: PF_MAGIC as u32, actual: header.magic as u32 }); }
 		if header.file_type != F::MAGIC { return Err(Error::wrong_magic::<F>(header.file_type)) }
 
-		let input = Input{ remaining: &bytes[header.header_size as usize..], is_64_bit: header.flags & PF_FLAG_HAS_64BIT_PTRS != 0 };
+		let input = &mut Input{ remaining: &bytes[header.header_size as usize..], is_64_bit: header.flags & PF_FLAG_HAS_64BIT_PTRS != 0 };
 
-		Ok(Self{ input, _p: std::marker::PhantomData })
-	}
-}
-
-impl<'inp, C : Magic + ParseMagicVariant<'inp>> Iterator for PackFileReader<'inp, C> {
-	type Item = crate::parse::Result<C>;
-
-	fn next(&mut self) -> Option<Self::Item> {
-		if self.input.remaining.len() < std::mem::size_of::<ChunkHeader>() { return None }
-
-		let chunk_header : ChunkHeader = unsafe{ std::ptr::read(self.input.remaining.as_ptr().cast()) };
-		let chunk_data = &self.input.remaining[chunk_header.chunk_header_size as usize..][..chunk_header.descriptor_offset as usize];
-		let chunk_input = &mut Input { remaining: chunk_data, is_64_bit: self.input.is_64_bit };
-
-		let next_offset = 8 + chunk_header.next_chunk_offset as usize;  // no clue where the +8 comes from
-		if next_offset <= self.input.remaining.len() { self.input.remaining = &self.input.remaining[next_offset..]; }
-		
-		Some(C::parse(chunk_header.magic, chunk_header.version, chunk_input))
+		<F as crate::parse::ParseVersioned>::parse(header.version, input)
 	}
 }
 

@@ -22,7 +22,7 @@ fn deserialize() {
 		}
 	}
 
-	let chunk = file.next().unwrap().map_err(|e| e.to_string()).unwrap();
+	let chunk = file.iter().next().unwrap().map_err(|e| e.to_string()).unwrap();
 
 	assert_eq!(chunk.bank_language.len(), 6);
 	assert_eq!(chunk.bank_language[0].bank_file_name.len(), 43769);

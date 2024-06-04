@@ -1,8 +1,9 @@
 #[path = "bidx/bidx.rs"]
 pub mod bidx;
 
+
 #[derive(crate::Parse)]
 #[packfile]
 pub enum ABIX {
-	BIDX(bidx::BIDX),
+	#[v(1)] V1(bidx::BIDX),
 }

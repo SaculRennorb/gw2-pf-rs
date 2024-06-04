@@ -12,13 +12,14 @@ fn deserialize() {
 	};
 
 	let file = &mut dut::pf::PackFileReader::<dut::formats::ABNK>::from_bytes(&data).map_err(|e| e.to_string()).unwrap();
+	let file = file.iter();
 	let chunk = file.next().unwrap().map_err(|e| e.to_string()).unwrap();
 
 	assert!(file.next().is_none());
 	assert_eq!(chunk.files.len(), 10);
 	for file in &chunk.files {
-		let inner_file = &mut dut::pf::PackFileReader::<dut::formats::ASND>::from_bytes(file.audio_data).map_err(|e| e.to_string()).unwrap();
-		for (i, chunk) in inner_file.enumerate() {
+		let inner_file = dut::pf::PackFileReader::<dut::formats::ASND>::from_bytes(file.audio_data).map_err(|e| e.to_string()).unwrap();
+		for (i, chunk) in inner_file.into_iter().enumerate() {
 			let chunk = chunk.unwrap();
 
 			let mp3 = chunk.audio_data;
@@ -51,12 +52,18 @@ fn print_type() {
 			v
 		};
 
-		let file = &mut dut::pf::PackFileReader::<dut::formats::ABNK>::from_bytes(&data).map_err(|e| e.to_string()).unwrap();
+		let file = match dut::pf::PackFileReader::<dut::formats::ABNK>::from_bytes(&data).map_err(|e| e.to_string()) { 
+			Ok(s) => s,
+			Err(e) => {
+				println!("Outer file parse failed: {e}");
+				continue;
+			},
+		};
 		for chunk in file {
 			let abnk = chunk.unwrap();
 
 			for asnd_file in &abnk.files {
-				let inner_file = &mut dut::pf::PackFileReader::<dut::formats::ASND>::from_bytes(asnd_file.audio_data).map_err(|e| e.to_string()).unwrap();
+				let inner_file = dut::pf::PackFileReader::<dut::formats::ASND>::from_bytes(asnd_file.audio_data).map_err(|e| e.to_string()).unwrap();
 				for chunk in inner_file {
 					let asnd = chunk.unwrap();
 

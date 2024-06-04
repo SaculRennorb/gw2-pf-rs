@@ -6,6 +6,7 @@ pub enum Error {
 	CannotFindNullTerminator,
 	UnknownVersion{ r#type : &'static str, actual : u16 },
 	UnknownMagic{ r#type : &'static str, actual : u32 },
+	UnknownMagicOrVersion{ r#type : &'static str, actual_magic : u32, actual_version : u32 }, //TODO(Rennorb) @cleanup
 }
 
 impl Error {
@@ -32,6 +33,17 @@ impl std::fmt::Display for Error {
 				f.write_fmt(format_args!("Unexpected file type for {}: expected: {:x?} ({}), actual: {:x?} ({})", r#type,
 					&expected.to_le_bytes(), unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(std::ptr::from_ref(expected).cast(), 4)) },
 					&actual.to_le_bytes(), unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(std::ptr::from_ref(actual).cast(), 4)) }
+				))
+			},
+			Error::UnknownMagic { r#type, actual } => {
+				f.write_fmt(format_args!("Unexpected magic bytes for {}: {:x?} ({})", r#type,
+					&actual.to_le_bytes(), unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(std::ptr::from_ref(actual).cast(), 4)) }
+				))
+			},
+			Error::UnknownMagicOrVersion { r#type, actual_magic, actual_version } => {
+				f.write_fmt(format_args!("Unexpected magic bytes or version for {}: actual magic: {:x?} ({}), version: {}", r#type,
+					&actual_magic.to_le_bytes(), unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(std::ptr::from_ref(actual_magic).cast(), 4)) },
+					actual_version
 				))
 			},
 			_ => f.write_fmt(format_args!("{:?}", self))
@@ -70,6 +82,7 @@ pub trait Parse<'inp> : Sized {
 	fn parse(input : &mut Input<'inp>) -> Result<Self>;
 }
 
+#[derive(Clone)]
 pub struct Input<'inp> {
 	pub remaining : &'inp [u8],
 	pub is_64_bit : bool,
@@ -189,10 +202,36 @@ impl<'inp> Parse<'inp> for &'inp [u8] {
 }
 
 pub trait ParseVersioned<'inp> : Sized {
-	fn parse(version : u16, input : &mut Input<'inp>) -> Result<Self>;
+	type Output;
+	fn parse(version : u16, input : &mut Input<'inp>) -> Result<Self::Output>;
 }
 
 pub trait ParseMagicVariant<'inp> : Sized {
 	fn parse(magic : u32, version : u16, input : &mut Input<'inp>) -> Result<Self>;
 }
 
+pub trait ChunkVariant<'inp> : Sized + ParseMagicVariant<'inp> {
+	fn parse_sequence(input : Input<'inp>) -> ChunkIter<'inp, Self>;
+}
+
+pub struct ChunkIter<'inp, V : ChunkVariant<'inp> + ParseMagicVariant<'inp>> {
+	pub input : Input<'inp>,
+	pub _p : std::marker::PhantomData<V>
+}
+
+impl<'inp, V : ChunkVariant<'inp> + ParseMagicVariant<'inp>> Iterator for ChunkIter<'inp, V> {
+	type Item = Result<V>;
+
+	fn next(&mut self) -> Option<Self::Item> {
+		if self.input.remaining.len() < std::mem::size_of::<crate::pf::ChunkHeader>() { return None }
+
+		let chunk_header = unsafe{ self.input.remaining.as_ptr().cast::<crate::pf::ChunkHeader>().as_ref().unwrap() };
+		let chunk_data = &self.input.remaining[chunk_header.chunk_header_size as usize..][..chunk_header.descriptor_offset as usize];
+		let chunk_input = &mut Input { remaining: chunk_data, is_64_bit: self.input.is_64_bit };
+
+		let next_offset = 8 + chunk_header.next_chunk_offset as usize;  // no clue where the +8 comes from
+		if next_offset <= self.input.remaining.len() { self.input.remaining = &self.input.remaining[next_offset..]; }
+		
+		Some(V::parse(chunk_header.magic, chunk_header.version, chunk_input))
+	}
+}

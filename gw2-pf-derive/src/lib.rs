@@ -1,10 +1,10 @@
 use proc_macro::TokenStream;
-use quote::{quote, quote_spanned};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{parse::Parse, parse_macro_input, punctuated::Punctuated, spanned::Spanned, DeriveInput, Fields};
 
 
 
-#[proc_macro_derive(Parse, attributes(versioned_chunk, v, packfile, null_terminated))]
+#[proc_macro_derive(Parse, attributes(chunk, v, packfile, concrete_packfile_version, null_terminated))]
 pub fn derive_parse(input : TokenStream) -> TokenStream {
 	let DeriveInput { ident: root_ident, data, attrs, generics: root_generics, .. } = parse_macro_input!(input);
 
@@ -39,14 +39,17 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 			let mut err = proc_macro2::TokenStream::new();
 			for attr in attrs {
 				if let syn::Meta::Path(meta) = attr.meta {
-					if meta.is_ident("versioned_chunk") {
-						err.extend(syn::Error::new(meta.span(), "versioned_chunk is only valid for enums").into_compile_error())
+					if meta.is_ident("chunk") {
+						err.extend(syn::Error::new(meta.span(), "chunk is only valid for enums").into_compile_error())
 					}
 					else if meta.is_ident("packfile") {
-						err.extend(syn::Error::new(meta.span(), "versioned_chunk is only valid for enums").into_compile_error())
+						err.extend(syn::Error::new(meta.span(), "packfile is only valid for enums").into_compile_error())
 					}
 					else if meta.is_ident("null_terminated") {
 						err.extend(syn::Error::new(meta.span(), "null_terminated is only valid for struct members").into_compile_error())
+					}
+					else if meta.is_ident("concrete_packfile_version") {
+						err.extend(syn::Error::new(meta.span(), "concrete_packfile_version is only for enums").into_compile_error())
 					}
 				}
 			}
@@ -106,32 +109,33 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 			for attr in attrs {
 				let syn::Meta::Path(ref meta) = attr.meta else { continue };
 
-				//let mut err = proc_macro2::TokenStream::new(); //todo
-
-				if meta.is_ident("versioned_chunk") {
-					let fields = _enum.variants.iter().map(|f| {
+				if meta.is_ident("chunk") {
+					let fields = _enum.variants.iter().filter_map(|f| {
 						let field_ident = &f.ident;
-						let Some(version_attr) = f.attrs.iter().find(|attr| matches!(attr.meta, syn::Meta::List(ref meta) if meta.path.is_ident("v"))) else {
-							return syn::Error::new(field_ident.span(), "missing version attribute").to_compile_error();
-						};
-						let version = version_attr.parse_args_with(syn::LitInt::parse).unwrap();
+						if let Some(version_attr) = f.attrs.iter().find(|attr| matches!(attr.meta, syn::Meta::List(ref meta) if meta.path.is_ident("v"))) {
+							let version = version_attr.parse_args_with(syn::LitInt::parse).unwrap();
 
-						let tuple_field = match f.fields {
-							Fields::Unnamed(ref field) => {
-								field.unnamed.first().unwrap()
-							},
-							_ => todo!(),
-						};
-						let span = tuple_field.span();
-						quote_spanned!(span => #version => Parse::parse(input).map(Self::#field_ident))
+							let tuple_field = match f.fields {
+								Fields::Unnamed(ref field) => { &field.unnamed[0] },
+								_ => todo!(),
+							};
+							let span = tuple_field.span();
+							Some(quote_spanned!(span => #version => Parse::parse(input).map(Self::#field_ident)))
+						}
+						else{
+							result.extend(syn::Error::new(field_ident.span(), "missing version attribute, add `#[v(..)]`").to_compile_error());
+							None
+						}
 					});
 
 					let own_magic = syn::LitByteStr::new(root_ident.to_string().as_bytes(), root_ident.span());
+					let raw_input_lt = &input_lt.params;
 
 					result = quote! {
 						#[automatically_derived]
 						impl #input_lt crate::parse::ParseVersioned #input_lt for #root_ident #root_generics {
-							fn parse(version : u16, input : &mut crate::parse::Input #input_lt) -> Result<Self, crate::parse::Error> {
+							type Output = Self;
+							fn parse(version : u16, input : &mut crate::parse::Input #input_lt) -> crate::parse::Result<Self::Output> {
 								use crate::parse::Parse;
 								match version {
 									#(#fields),*,
@@ -141,42 +145,10 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 						}
 
 						#[automatically_derived]
-						impl #root_generics crate::pf::Magic for #root_ident #root_generics {
-							const MAGIC : u32 = crate::fcc(#own_magic);
-						}
-					};
-
-					derive_deref_if_only_one_variant(&mut result, &root_ident, &root_generics, &_enum);
-
-					break;
-				}
-				else if meta.is_ident("packfile") {
-					let fields = _enum.variants.iter().map(|f| {
-						let field_ident = &f.ident;
-						let tuple_field = match f.fields {
-							Fields::Unnamed(ref field) => {
-								field.unnamed.first().unwrap()
-							},
-							_ => todo!(),
-						};
-						let inner_type = match tuple_field.ty {
-							syn::Type::Path(ref p) => strip_lifetimes_from_path(&p.path.segments),
-							_ => panic!(),
-						};
-						let span = tuple_field.span();
-						quote_spanned!(span => #inner_type::MAGIC => ParseVersioned::parse(version, input).map(Self::#field_ident))
-					});
-
-					let own_magic = syn::LitByteStr::new(root_ident.to_string().as_bytes(), root_ident.span());
-
-					result = quote! {
-						#[automatically_derived]
 						impl #input_lt crate::parse::ParseMagicVariant #input_lt for #root_ident #root_generics {
-							fn parse(magic : u32, version : u16, input : &mut crate::parse::Input #input_lt) -> Result<Self, crate::parse::Error> {
-								use crate::pf::Magic;
-								use crate::parse::ParseVersioned;
+							fn parse(magic : u32, version : u16, input : &mut crate::parse::Input #input_lt) -> crate::parse::Result<Self> {
 								match magic {
-									#(#fields),*,
+									<Self as crate::pf::Magic>::MAGIC => <Self as crate::parse::ParseVersioned>::parse(version, input),
 									_ => Err(crate::parse::Error::UnknownMagic { r#type: std::any::type_name::<#root_ident>(), actual: magic }),
 								}
 							}
@@ -186,9 +158,136 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 						impl #root_generics crate::pf::Magic for #root_ident #root_generics {
 							const MAGIC : u32 = crate::fcc(#own_magic);
 						}
+
+						#[automatically_derived]
+						impl #input_lt crate::parse::ChunkVariant #input_lt for #root_ident #root_generics {
+							fn parse_sequence(input : crate::parse::Input #input_lt) -> crate::parse::ChunkIter<#raw_input_lt, Self> {
+								crate::parse::ChunkIter { input, _p : std::marker::PhantomData }
+							}
+						}
 					};
 
 					derive_deref_if_only_one_variant(&mut result, &root_ident, &root_generics, &_enum);
+
+					break;
+				}
+				else if meta.is_ident("concrete_packfile_version") {
+					let fields = _enum.variants.iter().filter_map(|f| {
+						let field_ident = &f.ident;
+						let tuple_field = match f.fields {
+							Fields::Unnamed(ref field) => { &field.unnamed[0] },
+							_ => todo!(),
+						};
+						let inner_type = match tuple_field.ty {
+							syn::Type::Path(ref p) => strip_lifetimes_from_path(&p.path.segments),
+							_ => panic!(),
+						};
+						let span = tuple_field.span();
+						Some(quote_spanned!(span => #inner_type::MAGIC => <#inner_type as crate::parse::ParseVersioned>::parse(version, input).map(Self::#field_ident)))
+					});
+
+					let raw_input_lt = &input_lt.params;
+
+					result = quote! {
+						#[automatically_derived]
+						impl #input_lt crate::parse::ParseMagicVariant #input_lt for #root_ident #root_generics {
+							fn parse(magic : u32, version : u16, input : &mut crate::parse::Input #input_lt) -> Result<Self, crate::parse::Error> {
+								use crate::pf::Magic;
+								match magic {
+									#(#fields),*,
+									_ => Err(crate::parse::Error::UnknownMagic { r#type: std::any::type_name::<#root_ident>(), actual: magic }),
+								}
+							}
+						}
+
+						#[automatically_derived]
+						impl #input_lt crate::parse::ChunkVariant #input_lt for #root_ident #root_generics {
+							fn parse_sequence(input : crate::parse::Input #input_lt) -> crate::parse::ChunkIter<#raw_input_lt, Self> {
+								crate::parse::ChunkIter { input, _p : std::marker::PhantomData }
+							}
+						}
+					};
+
+					derive_deref_if_only_one_variant(&mut result, &root_ident, &root_generics, &_enum);
+
+					break;
+				}
+				else if meta.is_ident("packfile") {
+					let raw_input_lt = &input_lt.params;
+					let iter_fields = _enum.variants.iter().map(|f| {
+						let field_ident = &f.ident;
+
+						let tuple_field = match f.fields {
+							Fields::Unnamed(ref field) => { &field.unnamed[0] },
+							_ => todo!(),
+						};
+						let inner_type = &tuple_field.ty;
+						let span = tuple_field.span();
+						quote_spanned!(span => #field_ident(crate::parse::ChunkIter<#raw_input_lt, #inner_type>))
+					});
+
+					let iter_ident = format_ident!("{root_ident}Iter");
+
+					let fields = _enum.variants.iter().filter_map(|f| {
+						let field_ident = &f.ident;
+						if let Some(version_attr) = f.attrs.iter().find(|attr| matches!(attr.meta, syn::Meta::List(ref meta) if meta.path.is_ident("v"))) {
+							let version = version_attr.parse_args_with(syn::LitInt::parse).unwrap();
+
+							let tuple_field = match f.fields {
+								Fields::Unnamed(ref field) => { &field.unnamed[0] },
+								_ => todo!(),
+							};
+							let span = tuple_field.span();
+							Some(quote_spanned!(span => #version => Ok(#iter_ident::#field_ident(ChunkVariant::parse_sequence(input.clone()))))) //TODO(Rennorb) @cleanup: get rid of this clone here
+						}
+						else{
+							result.extend(syn::Error::new(field_ident.span(), "missing version attribute, add `#[v(..)]`").to_compile_error());
+							None
+						}
+					});
+
+					let own_magic = syn::LitByteStr::new(root_ident.to_string().as_bytes(), root_ident.span());
+
+					let _impl = quote! {
+						#[automatically_derived]
+						impl #root_generics crate::pf::Magic for #root_ident #root_generics {
+							const MAGIC : u32 = crate::fcc(#own_magic);
+						}
+
+						pub enum #iter_ident #input_lt {
+							#(#iter_fields),*
+						}
+
+						#[automatically_derived]
+						impl #input_lt crate::parse::ParseVersioned #input_lt for #root_ident #root_generics {
+							type Output = #iter_ident #input_lt;
+							fn parse(version : u16, input : &mut crate::parse::Input #input_lt) -> Result<Self::Output, crate::parse::Error> {
+								use crate::parse::ChunkVariant;
+								match version {
+									#(#fields),*,
+									_ => Err(crate::parse::Error::UnknownVersion { r#type: std::any::type_name::<#root_ident>(), actual: version }),
+								}
+							}
+						}
+					};
+					result.extend(_impl);
+
+					let single_variant = derive_deref_if_only_one_variant(&mut result, &root_ident, &root_generics, &_enum);
+					if let Some((variant_ident, variant_type)) = single_variant {
+						let _deref = quote! {
+							#[automatically_derived]
+							impl #input_lt #iter_ident #input_lt {
+								pub fn iter(&mut self) -> &mut crate::parse::ChunkIter<#raw_input_lt, #variant_type> { match self { Self::#variant_ident(ref mut s) => s } }
+							}
+							#[automatically_derived]
+							impl #input_lt IntoIterator for #iter_ident #input_lt {
+								type Item = crate::parse::Result<#variant_type>;
+								type IntoIter = crate::parse::ChunkIter<#raw_input_lt, #variant_type>;
+								fn into_iter(self) -> Self::IntoIter {  match self { Self::#variant_ident(s) => s } }
+							}
+						};
+						result.extend(_deref);
+					}
 
 					break;
 				}
@@ -238,14 +337,14 @@ fn strip_lifetimes_from_path(path : &Path) -> Path {
 	new_path
 }
 
-fn derive_deref_if_only_one_variant(output : &mut proc_macro2::TokenStream, root_ident : &syn::Ident, root_generics : &syn::Generics, _enum : &syn::DataEnum) {
-	if _enum.variants.len() != 1 { return }
+fn derive_deref_if_only_one_variant<'a>(output : &mut proc_macro2::TokenStream, root_ident : &syn::Ident, root_generics : &syn::Generics, _enum : &'a syn::DataEnum) -> Option<(&'a syn::Ident, &'a syn::Type)> {
+	if _enum.variants.len() != 1 { return None }
 
 	let only_variant = &_enum.variants[0];
 	let variant_ident = &only_variant.ident;
 	let variant_type = match only_variant.fields {
-			Fields::Unnamed(ref f) => &f.unnamed[0].ty,
-			_ => todo!(),
+		Fields::Unnamed(ref f) => &f.unnamed[0].ty,
+		_ => todo!(),
 	};
 
 	let _impl = quote! {
@@ -254,7 +353,13 @@ fn derive_deref_if_only_one_variant(output : &mut proc_macro2::TokenStream, root
 			type Target = #variant_type;
 			fn deref(&self) -> &Self::Target { match self { Self::#variant_ident(ref s) => s } }
 		}
+		#[automatically_derived]
+		impl #root_generics std::ops::DerefMut for #root_ident #root_generics {
+			fn deref_mut(&mut self) -> &mut Self::Target { match self { Self::#variant_ident(ref mut s) => s } }
+		}
 	};
 
 	output.extend(_impl);
+
+	Some((variant_ident, variant_type))
 }
