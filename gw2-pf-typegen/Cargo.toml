@@ -1,0 +1,6 @@
+[package]
+name = "gw2-pf-typegen"
+version = "0.1.0"
+edition = "2021"
+
+[lib]

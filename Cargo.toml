@@ -3,5 +3,6 @@ resolver = "2"
 members = [
 	"gw2-pf",
 	"gw2-pf-derive",
+	"gw2-pf-typegen",
 ]
 
