@@ -50,7 +50,6 @@ fn format_eula() {
 
 				if !import_set.is_empty() {
 					fmt.write_str("use crate::{")?;
-					let mut first = true;
 					for import in import_set {
 						fmt.write_str(import)?;
 						fmt.write_str(", ")?;

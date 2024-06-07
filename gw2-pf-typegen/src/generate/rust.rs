@@ -5,7 +5,7 @@ pub fn export_chunk<'a>(chunk : &Chunk<'a>, fmt : &mut Formatter) -> FmtResult {
 	fmt.write_str(chunk.magic)?;
 	fmt.write_str(" {\n")?;
 	for version in chunk.versions.iter() {
-		fmt.write_fmt(format_args!("\t#[v({})] V{}({}),\n", version.version, version.version, translate_type_name(&version.root)))?;
+		fmt.write_fmt(format_args!("\t#[v({ver})] V{ver}(v{ver}::{}),\n", translate_type_name(&version.root), ver = version.version))?;
 	}
 	fmt.write_str("}\n")
 }
