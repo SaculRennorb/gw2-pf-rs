@@ -1,9 +1,11 @@
-use std::{borrow::Cow, mem::MaybeUninit, str::{from_utf8, from_utf8_unchecked}};
+use std::{borrow::Cow, collections::HashSet, mem::MaybeUninit, str::{from_utf8, from_utf8_unchecked}};
 
 pub fn locate_structs(raw_exe : &[u8]) {
 	println!("reading exe header");
-	let exe = &PE::parse_header(raw_exe);
+	let exe = PE::parse_header(raw_exe);
 	println!("ok");
+
+	let parser = &mut Parser{ exe, chunk_cache: HashSet::new() };
 
 	const ASCII_HI_BITS : u8 = 0b01000000;
 	const ASCII_MASK    : u8 = 0b11000000;
@@ -23,7 +25,7 @@ pub fn locate_structs(raw_exe : &[u8]) {
 			#[allow(non_upper_case_globals)]
 			const _z : u8 = 'z' as u8;
 			if (&chunk[..4]).iter().all(|c| matches!(*c, _A..=_Z | _a..=_z)) {
-				if let Ok(len) = exe.parse_chunk(&mut Reader { remaining }) {
+				if let Ok(len) = parser.parse_chunk(&mut Reader { remaining }) {
 					remaining = &remaining[len..];
 					continue;
 				}
@@ -40,23 +42,26 @@ struct Chunk<'a> {
 	versions : Vec<SpecificChunkVersion<'a>>,
 }
 
-impl<'a> PE<'a> {
-	pub fn parse_chunk(&self, input : &mut Reader<'a>) -> Result<usize> {
+impl<'a> Parser<'a> {
+	pub fn parse_chunk(&mut self, input : &mut Reader<'a>) -> Result<usize> {
 		let initial_len = input.remaining.len();
 
+		let magic_bytes = input.eat_slice(4).unwrap().remaining;
 		let magic =  {
-			let mut magic_bytes = input.eat_slice(4).unwrap().remaining;
-			if magic_bytes[3] == 0 { magic_bytes = &magic_bytes[..3]; }
-			unsafe { from_utf8_unchecked(magic_bytes) }
+			let final_bytes = if magic_bytes[3] == 0 { &magic_bytes[..3] } else { magic_bytes };
+			unsafe { from_utf8_unchecked(final_bytes) }
 		};
 
 		let n_versions = input.eat_u32()?;
+		let meta_offset = input.eat_rva_as_offset(&self.exe)?;
 
-		let meta_offset = input.eat_rva_as_offset(self)?;
+		if !self.chunk_cache.insert(ChunkIdentifier { magic, max_version: n_versions, meta_offset }) {
+			return Err(Error::DuplicateChunk { magic: magic_bytes.try_into().unwrap(), max_version: n_versions, meta_offset })
+		}
 
 		let mut versions = Vec::new();
 		if meta_offset != 0 {
-			let meta_input = &mut self.reader_from_offset(meta_offset)?;
+			let meta_input = &mut self.exe.reader_from_offset(meta_offset)?;
 			versions = self.parse_chunk_versions(meta_input, n_versions)?;
 		}
 
@@ -75,17 +80,17 @@ struct SpecificChunkVersion<'a> {
 	pub root : Struct<'a>,
 }
 
-impl<'a> PE<'a> {
+impl<'a> Parser<'a> {
 	pub fn parse_chunk_versions(&self, input : &mut Reader<'a>, n_versions : u32) -> Result<Vec<SpecificChunkVersion<'a>>> {
 		let mut chunks = Vec::with_capacity(n_versions as usize);
 
 		for version in 0..n_versions {
 			let chunk_meta_header_input = &mut input.eat_slice(24)?;
 
-			let chunk_offset = chunk_meta_header_input.eat_rva_as_offset(self)?;
+			let chunk_offset = chunk_meta_header_input.eat_rva_as_offset(&self.exe)?;
 			if chunk_offset == 0 { continue }
 
-			let root_input = &mut self.reader_from_offset(chunk_offset)?;
+			let root_input = &mut self.exe.reader_from_offset(chunk_offset)?;
 			let root = self.parse_struct(root_input)?;
 
 			let chunk = SpecificChunkVersion{ version, root };
@@ -102,7 +107,7 @@ struct Struct<'a> {
 	pub fields : Vec<Field<'a>>,
 }
 
-impl<'a> PE<'a> {
+impl<'a> Parser<'a> {
 	pub fn parse_struct(&self, input : &mut Reader<'a>) -> Result<Struct<'a>> {
 		let mut fields = Vec::new();
 
@@ -194,33 +199,33 @@ impl FieldDetail<'_> {
 	}
 }
 
-impl<'a> PE<'a> {
+impl<'a> Parser<'a> {
 	pub fn prase_field(&self, input : &mut Reader<'a>) -> Result<Field<'a>> {
 		let input = &mut input.eat_slice(32)?; // all fields are 32 byte
 
 		let _type = input.eat_u16()?; // 0-2
 		input.eat_u16()?; // 2-4
 		input.eat_u32()?; // 4-8
-		let name = self.get_str_at(input.eat_rva_as_offset(self)?)?;
+		let name = self.exe.get_str_at(input.eat_rva_as_offset(&self.exe)?)?;
 
 		let detail = match _type {
 			0 => FieldDetail::End,
 			1 => {
-				let offset = input.eat_rva_as_offset(self)?;
+				let offset = input.eat_rva_as_offset(&self.exe)?;
 				let size = input.eat_u64()? as usize;
-				let inner = self.parse_struct(&mut self.reader_from_offset(offset)?)?;
+				let inner = self.parse_struct(&mut self.exe.reader_from_offset(offset)?)?;
 				FieldDetail::FixedArray { size, inner }
 			},
 			2 => {
-				let offset = input.eat_rva_as_offset(self)?;
+				let offset = input.eat_rva_as_offset(&self.exe)?;
 				let size = input.eat_u64()? as usize;
-				let inner = self.parse_struct(&mut self.reader_from_offset(offset)?)?;
+				let inner = self.parse_struct(&mut self.exe.reader_from_offset(offset)?)?;
 				FieldDetail::Array { size, inner }
 			},
 			3 => {
-				let offset = input.eat_rva_as_offset(self)?;
+				let offset = input.eat_rva_as_offset(&self.exe)?;
 				let size = input.eat_u64()? as usize;
-				let inner = self.parse_struct(&mut self.reader_from_offset(offset)?)?;
+				let inner = self.parse_struct(&mut self.exe.reader_from_offset(offset)?)?;
 				FieldDetail::PtrArray { size, inner }
 			},
 			5 => FieldDetail::Byte,
@@ -247,9 +252,9 @@ impl<'a> PE<'a> {
 			28 => FieldDetail::Variant {},
 			29 => FieldDetail::StructCommon {},
 			33 => {
-				let offset = input.eat_rva_as_offset(self)?;
+				let offset = input.eat_rva_as_offset(&self.exe)?;
 				let size = input.eat_u64()? as usize;
-				let inner = self.parse_struct(&mut self.reader_from_offset(offset)?)?;
+				let inner = self.parse_struct(&mut self.exe.reader_from_offset(offset)?)?;
 				FieldDetail::SmallArray { size, inner }
 			},
 			num => return Err(Error::InvalidFieldType { num })
@@ -292,6 +297,18 @@ impl<'a> Reader<'a> {
 			None => Err(Error::RvaOutOfBounds { rva }),
 		}
 	}
+}
+
+struct Parser<'a> {
+	pub exe : PE<'a>,
+	pub chunk_cache : HashSet<ChunkIdentifier<'a>>,
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct ChunkIdentifier<'a> {
+	pub magic : &'a str,
+	pub max_version : u32,
+	pub meta_offset : usize,
 }
 
 
@@ -369,6 +386,7 @@ enum Error {
 	InvalidFieldType { num : u16 },
 	RvaOutOfBounds { rva : usize },
 	OffsetOutOfBounds { offset : usize },
+	DuplicateChunk { magic: [u8; 4], max_version: u32, meta_offset: usize },
 	NoChunks,
 	DecodingFailed,
 }
