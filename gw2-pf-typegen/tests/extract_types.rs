@@ -2,7 +2,7 @@ use std::{collections::HashSet, io::Read};
 use gw2_pf_typegen as dut;
 
 #[test]
-fn find_types() {
+fn dump_chunks() {
 	let data = {
 		let mut file = std::fs::File::open("C:/games/Guild Wars 2/Gw2-64.exe").unwrap();
 		let mut buffer = Vec::new();
@@ -24,7 +24,7 @@ fn format_eula() {
 		buffer
 	};
 
-	let eula = dut::analyze::locate_chunks(&data).filter(|c| c.magic == "eula").next().unwrap();
+	let eula = dut::analyze::locate_chunks(&data).filter(|c| c.magic == "BKCK").next().unwrap();
 
 	println!("{}", Wrapper(eula));
 

@@ -69,11 +69,13 @@ impl<'a> Parser<'a> {
 		if meta_offset != 0 {
 			let meta_input = &mut self.exe.reader_from_offset(meta_offset)?;
 			versions = self.parse_chunk_versions(meta_input, n_versions)?;
+			
 		}
-
+		
 		if versions.is_empty() { return Err(Error::NoChunks) }
-	
-		let chunk = Chunk { magic, versions };
+
+		let holds_input_references = versions.iter().any(|c| c.holds_input_references);	
+		let chunk = Chunk { magic, versions, holds_input_references };
 	
 		Ok((chunk, initial_len - input.remaining.len()))
 	}
@@ -99,14 +101,16 @@ impl<'a> Parser<'a> {
 	
 	pub fn parse_type(&self, input : &mut Reader<'a>) -> Result<Type<'a>> {
 		let mut fields = Vec::new();
+		let mut holds_input_references = false;
 
 		let name = loop {
-			let field = self.prase_field(input).inspect_err(|f| println!("- {f:?}"))?;
+			let field = self.prase_field(input)?;
 			if matches!(field.detail, FieldDetail::End) { break field.name }
+			holds_input_references |= field.holds_input_references;
 			fields.push(field);
 		};
 
-		Ok(Type { name, fields })
+		Ok(Type { name, fields, holds_input_references })
 	}
 
 	pub fn prase_field(&self, input : &mut Reader<'a>) -> Result<Field<'a>> {
@@ -117,25 +121,29 @@ impl<'a> Parser<'a> {
 		input.eat_u32()?; // 4-8
 		let name = self.exe.get_str_at(input.eat_rva_as_offset(&self.exe)?)?;
 
+		let mut holds_input_references = false;
+
 		let detail = match _type {
 			0 => FieldDetail::End,
-			1 => {
+			1 | 2 | 33 => {
 				let offset = input.eat_rva_as_offset(&self.exe)?;
 				let size = input.eat_u64()? as usize;
 				let inner = self.parse_type(&mut self.exe.reader_from_offset(offset)?)?;
-				FieldDetail::FixedArray { size, inner }
-			},
-			2 => {
-				let offset = input.eat_rva_as_offset(&self.exe)?;
-				let size = input.eat_u64()? as usize;
-				let inner = self.parse_type(&mut self.exe.reader_from_offset(offset)?)?;
-				FieldDetail::Array { size, inner }
+				//NOTe(Rennorb): Byte arrays should not be copied over, their derserialize should just hold a pointer to the original data. 
+				holds_input_references = inner.holds_input_references || inner.name == "byte";
+				match _type {
+					 1 => FieldDetail::FixedArray { size, inner },
+					 2 => FieldDetail::Array      { size, inner },
+					33 => FieldDetail::SmallArray { size, inner },
+					_ => unreachable!()
+				}
 			},
 			3 => {
 				let offset = input.eat_rva_as_offset(&self.exe)?;
 				let size = input.eat_u64()? as usize;
 				let inner = self.parse_type(&mut self.exe.reader_from_offset(offset)?)?;
-				FieldDetail::PtrArray { size, inner }
+				holds_input_references = inner.holds_input_references;
+				FieldDetail::PtrArray   { size, inner }
 			},
 			5 => FieldDetail::Byte,
 			6 => FieldDetail::Byte4,
@@ -146,19 +154,20 @@ impl<'a> Parser<'a> {
 			13 => FieldDetail::Float2,
 			14 => FieldDetail::Float3,
 			15 => FieldDetail::Float4,
-			16 => {
+			16 | 20 | 29 => {
 				let offset = input.eat_rva_as_offset(&self.exe)?;
 				let inner = self.parse_type(&mut self.exe.reader_from_offset(offset)?)?;
-				FieldDetail::Reference { inner }
+				holds_input_references = inner.holds_input_references;
+				match _type {
+					16 => FieldDetail::Reference    { inner },
+					20 => FieldDetail::Inline       { inner },
+					29 => FieldDetail::StructCommon { inner },
+					_ => unreachable!()
+				}
 			},
 			17 => FieldDetail::QuadWord,
 			18 => FieldDetail::WideCString,
 			19 => FieldDetail::CString,
-			20 => {
-				let offset = input.eat_rva_as_offset(&self.exe)?;
-				let inner = self.parse_type(&mut self.exe.reader_from_offset(offset)?)?;
-				FieldDetail::Inline { inner }
-			},
 			21 => FieldDetail::Word,
 			22 => FieldDetail::UUID,
 			23 => FieldDetail::Byte3,
@@ -171,29 +180,20 @@ impl<'a> Parser<'a> {
 				let size = input.eat_u64()? as usize;
 
 				let input = &mut self.exe.reader_from_offset(offset)?;
-				let mut variants = Vec::new();
-				for i in 0..size {
+				let mut variants = Vec::with_capacity(size);
+				for _i in 0..size {
 					let variant_offset = input.eat_rva_as_offset(&self.exe)?;
 					let input = &mut self.exe.reader_from_offset(variant_offset)?;
-					variants.push(self.parse_type(input)?);
+					let inner = self.parse_type(input)?;
+					holds_input_references |= inner.holds_input_references;	
+					variants.push(inner);
 				}
 				FieldDetail::Variant { variants }
-			},
-			29 => {
-				let offset = input.eat_rva_as_offset(&self.exe)?;
-				let inner = self.parse_type(&mut self.exe.reader_from_offset(offset)?)?;
-				FieldDetail::StructCommon { inner }
-			},
-			33 => {
-				let offset = input.eat_rva_as_offset(&self.exe)?;
-				let size = input.eat_u64()? as usize;
-				let inner = self.parse_type(&mut self.exe.reader_from_offset(offset)?)?;
-				FieldDetail::SmallArray { size, inner }
 			},
 			num => return Err(Error::InvalidFieldType { num })
 		};
 
-		Ok(Field { name, detail })
+		Ok(Field { name, detail, holds_input_references })
 	}
 }
 

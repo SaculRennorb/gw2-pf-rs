@@ -1,6 +1,7 @@
 #[derive(Debug)]
 pub struct Chunk<'a> {
 	pub magic    : &'a str, //can be 4 or 3 bytes long
+	pub holds_input_references : bool,
 	pub versions : Vec<SpecificChunkVersion<'a>>,
 }
 
@@ -10,15 +11,22 @@ pub struct SpecificChunkVersion<'a> {
 	pub root : Type<'a>,
 }
 
+impl<'a> std::ops::Deref for SpecificChunkVersion<'a> {
+	type Target = Type<'a>;
+	fn deref(&self) -> &Self::Target { &self.root }
+}
+
 #[derive(Debug, Hash)]
 pub struct Type<'a> {
 	pub name   : &'a str,
+	pub holds_input_references : bool,
 	pub fields : Vec<Field<'a>>,
 }
 
 #[derive(Debug, Hash)]
 pub struct Field<'a> {
 	pub name : &'a str,
+	pub holds_input_references : bool,
 	pub detail : FieldDetail<'a>,
 }
 
