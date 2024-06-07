@@ -23,7 +23,7 @@ pub fn locate_structs(raw_exe : &[u8]) {
 			#[allow(non_upper_case_globals)]
 			const _z : u8 = 'z' as u8;
 			if (&chunk[..4]).iter().all(|c| matches!(*c, _A..=_Z | _a..=_z)) {
-				if let Ok(len) = exe.parse_packfile(&mut Reader { eaten: 0, remaining }) {
+				if let Ok(len) = exe.parse_chunk(&mut Reader { remaining }) {
 					remaining = &remaining[len..];
 					continue;
 				}
@@ -35,14 +35,13 @@ pub fn locate_structs(raw_exe : &[u8]) {
 }
 
 #[derive(Debug)]
-struct PackFile<'a> {
-	magic : &'a str, //can be 4 or 3 bytes long
-	//version : u32,
-	chunks : Vec<Chunk<'a>>,
+struct Chunk<'a> {
+	magic    : &'a str, //can be 4 or 3 bytes long
+	versions : Vec<SpecificChunkVersion<'a>>,
 }
 
 impl<'a> PE<'a> {
-	pub fn parse_packfile(&self, input : &mut Reader<'a>) -> Result<usize> {
+	pub fn parse_chunk(&self, input : &mut Reader<'a>) -> Result<usize> {
 		let initial_len = input.remaining.len();
 
 		let magic =  {
@@ -53,17 +52,17 @@ impl<'a> PE<'a> {
 
 		let n_versions = input.eat_u32()?;
 
-		let chunks_offset = input.eat_rva(self)?;
-		
-		println!("C: {magic} - v{n_versions}, co: {chunks_offset}");
-		
-		let mut chunks = Vec::new();
-		if chunks_offset != 0 {
-			let chunk_input = &mut self.reader_from_offset(chunks_offset)?;
-			chunks = self.parse_chunks(chunk_input, 1)?;
+		let meta_offset = input.eat_rva_as_offset(self)?;
+
+		let mut versions = Vec::new();
+		if meta_offset != 0 {
+			let meta_input = &mut self.reader_from_offset(meta_offset)?;
+			versions = self.parse_chunk_versions(meta_input, n_versions)?;
 		}
+
+		if versions.is_empty() { return Err(Error::NoChunks) }
 	
-		let pf = PackFile { magic, chunks };
+		let pf = Chunk { magic, versions };
 		println!("{pf:#?}");	
 	
 		Ok(initial_len - input.remaining.len())
@@ -71,28 +70,25 @@ impl<'a> PE<'a> {
 }
 
 #[derive(Debug)]
-struct Chunk<'a> {
-	pub magic : &'a str,
+struct SpecificChunkVersion<'a> {
 	pub version : u32,
 	pub root : Struct<'a>,
 }
 
 impl<'a> PE<'a> {
-	pub fn parse_chunks(&self, input : &mut Reader<'a>, n_versions : u32) -> Result<Vec<Chunk<'a>>> {
+	pub fn parse_chunk_versions(&self, input : &mut Reader<'a>, n_versions : u32) -> Result<Vec<SpecificChunkVersion<'a>>> {
 		let mut chunks = Vec::with_capacity(n_versions as usize);
 
 		for version in 0..n_versions {
 			let chunk_meta_header_input = &mut input.eat_slice(24)?;
 
-			let chunk_offset = chunk_meta_header_input.eat_rva(self)?;
+			let chunk_offset = chunk_meta_header_input.eat_rva_as_offset(self)?;
 			if chunk_offset == 0 { continue }
-
-			println!("{:?}", chunk_meta_header_input.remaining);
 
 			let root_input = &mut self.reader_from_offset(chunk_offset)?;
 			let root = self.parse_struct(root_input)?;
 
-			let chunk = Chunk{ magic: "", version, root };
+			let chunk = SpecificChunkVersion{ version, root };
 			chunks.push(chunk);
 		}
 
@@ -134,10 +130,10 @@ impl<'a> std::ops::Deref for Field<'a> {
 #[derive(Debug)]
 enum FieldDetail<'a> {
 	End,
-	FixedArray  { size : usize, /*inner : Struct<'a>*/ },
-	Array       { size : usize, /*inner : Struct<'a>*/ },
-	PtrArray    { size : usize, /*inner : Struct<'a>*/ },
-	Byte{ _p: std::marker::PhantomData<&'a ()>},
+	FixedArray  { size : usize, inner : Struct<'a> },
+	Array       { size : usize, inner : Struct<'a> },
+	PtrArray    { size : usize, inner : Struct<'a> },
+	Byte,
 	Byte4,
 	Double,
 	DoubleWord,
@@ -160,7 +156,7 @@ enum FieldDetail<'a> {
 	FileRef,
 	Variant {},
 	StructCommon {},
-	SmallArray  { size : usize, /*inner : Struct<'a>*/ },
+	SmallArray  { size : usize, inner : Struct<'a> },
 }
 
 impl FieldDetail<'_> {
@@ -205,60 +201,56 @@ impl<'a> PE<'a> {
 		let _type = input.eat_u16()?; // 0-2
 		input.eat_u16()?; // 2-4
 		input.eat_u32()?; // 4-8
-		print!("{_type} "); //@dbg
-		let name = self.get_str_at(input.eat_rva(self)?)?;
-		
-		println!("{name:?}"); //@dbg
+		let name = self.get_str_at(input.eat_rva_as_offset(self)?)?;
 
 		let detail = match _type {
 			0 => FieldDetail::End,
 			1 => {
-				let offset = input.eat_rva(self)?;
+				let offset = input.eat_rva_as_offset(self)?;
 				let size = input.eat_u64()? as usize;
-				//let inner = self.parse_struct(&mut self.reader_from_offset(offset)?)?;
-				FieldDetail::FixedArray { size, /*inner*/ }
+				let inner = self.parse_struct(&mut self.reader_from_offset(offset)?)?;
+				FieldDetail::FixedArray { size, inner }
 			},
 			2 => {
-				let offset = input.eat_rva(self)?;
+				let offset = input.eat_rva_as_offset(self)?;
 				let size = input.eat_u64()? as usize;
-				println!("{offset:x} {size}, now {}, base {:x}", input.eaten, self.base_addr); //@dbg
-				//let inner = self.parse_struct(&mut self.reader_from_offset(offset)?).inspect_err(|e| println!("+ {e:?}"))?; //@dbg
-				FieldDetail::Array { size, /*inner*/ }
+				let inner = self.parse_struct(&mut self.reader_from_offset(offset)?)?;
+				FieldDetail::Array { size, inner }
 			},
 			3 => {
-				let offset = input.eat_rva(self)?;
+				let offset = input.eat_rva_as_offset(self)?;
 				let size = input.eat_u64()? as usize;
-				//let inner = self.parse_struct(&mut self.reader_from_offset(offset)?)?;
-				FieldDetail::PtrArray { size, /*inner*/ }
+				let inner = self.parse_struct(&mut self.reader_from_offset(offset)?)?;
+				FieldDetail::PtrArray { size, inner }
 			},
-			5 => FieldDetail::Byte         { _p: std::marker::PhantomData },
-			6 => FieldDetail::Byte4        {  },
-			7 => FieldDetail::Double       {  },
-			10 => FieldDetail::DoubleWord   {  },
-			11 => FieldDetail::FileName     {  },
-			12 => FieldDetail::Float        {  },
-			13 => FieldDetail::Float2       {  },
-			14 => FieldDetail::Float3       {  },
-			15 => FieldDetail::Float4       {  },
-			16 => FieldDetail::Reference    {  },
-			17 => FieldDetail::QuadWord     {  },
-			18 => FieldDetail::WideCString  {  },
-			19 => FieldDetail::CString      {  },
-			20 => FieldDetail::Inline       {  },
-			21 => FieldDetail::Word         {  },
-			22 => FieldDetail::UUID         {  },
-			23 => FieldDetail::Byte3        {  },
-			24 => FieldDetail::DoubleWord2  {  },
-			25 => FieldDetail::DoubleWord4  {  },
-			26 => FieldDetail::DoubleWord3  {  },
-			27 => FieldDetail::FileRef      {  },
-			28 => FieldDetail::Variant      {  },
-			29 => FieldDetail::StructCommon {  },
+			5 => FieldDetail::Byte,
+			6 => FieldDetail::Byte4,
+			7 => FieldDetail::Double,
+			10 => FieldDetail::DoubleWord,
+			11 => FieldDetail::FileName,
+			12 => FieldDetail::Float,
+			13 => FieldDetail::Float2,
+			14 => FieldDetail::Float3,
+			15 => FieldDetail::Float4,
+			16 => FieldDetail::Reference {},
+			17 => FieldDetail::QuadWord,
+			18 => FieldDetail::WideCString,
+			19 => FieldDetail::CString,
+			20 => FieldDetail::Inline {},
+			21 => FieldDetail::Word,
+			22 => FieldDetail::UUID,
+			23 => FieldDetail::Byte3,
+			24 => FieldDetail::DoubleWord2,
+			25 => FieldDetail::DoubleWord4,
+			26 => FieldDetail::DoubleWord3,
+			27 => FieldDetail::FileRef,
+			28 => FieldDetail::Variant {},
+			29 => FieldDetail::StructCommon {},
 			33 => {
-				let offset = input.eat_rva(self)?;
+				let offset = input.eat_rva_as_offset(self)?;
 				let size = input.eat_u64()? as usize;
-				//let inner = self.parse_struct(&mut self.reader_from_offset(offset)?)?;
-				FieldDetail::SmallArray { size, /*inner*/ }
+				let inner = self.parse_struct(&mut self.reader_from_offset(offset)?)?;
+				FieldDetail::SmallArray { size, inner }
 			},
 			num => return Err(Error::InvalidFieldType { num })
 		};
@@ -268,7 +260,6 @@ impl<'a> PE<'a> {
 }
 
 struct Reader<'a> {
-	pub eaten : usize, //@dbg
 	pub remaining : &'a [u8]
 }
 
@@ -276,31 +267,28 @@ impl<'a> Reader<'a> {
 	fn eat_slice(&mut self, len : usize) -> Result<Reader<'a>> {
 		let (c, r) = self.remaining.split_at(len);
 		self.remaining = r;
-		Ok(Reader { eaten: 0, remaining: c })
+		Ok(Reader { remaining: c })
 	}
 	fn eat_u16(&mut self) -> Result<u16> {
 		let (c, r) = self.remaining.split_at(2);
 		self.remaining = r;
-		self.eaten += 2;
 		Ok(u16::from_le_bytes(c.try_into().unwrap()))
 	}
 	fn eat_u32(&mut self) -> Result<u32> {
 		let (c, r) = self.remaining.split_at(4);
 		self.remaining = r;
-		self.eaten += 4;
 		Ok(u32::from_le_bytes(c.try_into().unwrap()))
 	}
 	fn eat_u64(&mut self) -> Result<u64> {
 		let (c, r) = self.remaining.split_at(8);
 		self.remaining = r;
-		self.eaten += 8;
 		Ok(u64::from_le_bytes(c.try_into().unwrap()))
 	}
-	pub fn eat_rva(&mut self, exe : &PE) -> Result<usize> {
+	pub fn eat_rva_as_offset(&mut self, exe : &PE) -> Result<usize> {
 		let rva = self.eat_u64()? as usize;
 		if rva == 0 { return Ok(0) }
 		match rva.checked_sub(exe.base_addr) {
-			Some(v) => Ok(v),
+			Some(v) => Ok(exe.translate_rva_to_bin_offset(v)?),
 			None => Err(Error::RvaOutOfBounds { rva }),
 		}
 	}
@@ -314,6 +302,7 @@ struct PE<'a> {
 	n_sections : usize,
 }
 
+#[derive(Debug)]
 struct PESection {
 	virtual_address : usize,
 	virtual_size    : usize,
@@ -327,6 +316,7 @@ impl<'a> PE<'a> {
 		let coff_hdr_start = &raw_exe[signature_offset + 4..]; // skip signature to get to the actual header
 
 		let n_sections = u16::from_le_bytes(coff_hdr_start[2..][..2].try_into().unwrap()) as usize;
+		println!("{n_sections} sections:");
 
 		let opt_hdr_size = u16::from_le_bytes(coff_hdr_start[16..][..2].try_into().unwrap()) as usize;
 		assert!(opt_hdr_size >= 20);
@@ -341,6 +331,7 @@ impl<'a> PE<'a> {
 				virtual_address: u32::from_le_bytes(section_data[12..][..4].try_into().unwrap()) as usize,
 				ptr_to_raw_data: u32::from_le_bytes(section_data[20..][..4].try_into().unwrap()) as usize,
 			};
+			println!("{:?}", sections[i]);
 		}
 
 		PE { raw_exe, base_addr, sections, n_sections }
@@ -357,10 +348,9 @@ impl<'a> PE<'a> {
 		Err(Error::NoSectionFound { rva })
 	}
 
-	pub fn get_str_at(&self, rva : usize) -> Result<&'a str> {
-		let start = self.translate_rva_to_bin_offset(rva)?;
-		if self.raw_exe.len() <= start { return Err(Error::OffsetOutOfBounds { offset: start }); }
-		let mem = &self.raw_exe[start..];
+	pub fn get_str_at(&self, offset : usize) -> Result<&'a str> {
+		if self.raw_exe.len() <= offset { return Err(Error::OffsetOutOfBounds { offset: offset }); }
+		let mem = &self.raw_exe[offset..];
 		let mut len = 0;
 		while mem[len] != 0 { len += 1; }
 		from_utf8(&mem[..len]).map_err(|_| Error::DecodingFailed)
@@ -368,7 +358,7 @@ impl<'a> PE<'a> {
 
 	pub fn reader_from_offset(&self, offset : usize) -> Result<Reader<'a>> {
 		if self.raw_exe.len() <= offset { return Err(Error::OffsetOutOfBounds { offset }); }
-		Ok(Reader{ eaten: 0, remaining: &self.raw_exe[offset..] })
+		Ok(Reader{ remaining: &self.raw_exe[offset..] })
 	}
 }
 
@@ -379,6 +369,7 @@ enum Error {
 	InvalidFieldType { num : u16 },
 	RvaOutOfBounds { rva : usize },
 	OffsetOutOfBounds { offset : usize },
+	NoChunks,
 	DecodingFailed,
 }
 
