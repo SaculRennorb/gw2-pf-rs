@@ -10,13 +10,13 @@ pub struct SpecificChunkVersion<'a> {
 	pub root : Type<'a>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub struct Type<'a> {
 	pub name   : &'a str,
 	pub fields : Vec<Field<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub struct Field<'a> {
 	pub name : &'a str,
 	pub detail : FieldDetail<'a>,
@@ -28,12 +28,12 @@ impl<'a> std::ops::Deref for Field<'a> {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub enum FieldDetail<'a> {
 	End,
-	FixedArray  { size : usize, inner : Type<'a> },
-	Array       { size : usize, inner : Type<'a> },
-	PtrArray    { size : usize, inner : Type<'a> },
+	FixedArray  { inner : Type<'a>, size : usize },
+	Array       { inner : Type<'a>, size : usize },
+	PtrArray    { inner : Type<'a>, size : usize },
 	Byte,
 	Byte4,
 	Double,
@@ -43,11 +43,11 @@ pub enum FieldDetail<'a> {
 	Float2,
 	Float3,
 	Float4,
-	Reference {},
+	Reference   { inner : Type<'a> },
 	QuadWord,
 	WideCString,
 	CString,
-	Inline {},
+	Inline      { inner : Type<'a> },
 	Word,
 	UUID,
 	Byte3,
@@ -55,7 +55,7 @@ pub enum FieldDetail<'a> {
 	DoubleWord4,
 	DoubleWord3,
 	FileRef,
-	Variant {},
-	StructCommon {},
-	SmallArray  { size : usize, inner : Type<'a> },
+	Variant     { variants : Vec<Type<'a>> },
+	StructCommon{ inner : Type<'a> },
+	SmallArray  { inner : Type<'a>, size : usize },
 }

@@ -39,18 +39,14 @@ fn format_eula() {
 				fmt.write_fmt(format_args!("pub mod v{} {{\n", version.version))?;
 				let linked_nonprimitive_types = &mut dut::generate::rust::RecursiveTypeReferences::new_with_seed(&version.root);
 
-				let mut import_set = HashSet::new();
+				let mut imports = HashSet::new();
 				for _type in linked_nonprimitive_types.into_iter() {
-					for field in _type.fields.iter() {
-						if let Some(import) = dut::generate::rust::get_required_import_for_field(field) {
-							import_set.insert(import);
-						}
-					}
+					dut::generate::rust::add_required_imports_for_type(&mut imports, _type);
 				}
 
-				if !import_set.is_empty() {
+				if !imports.is_empty() {
 					fmt.write_str("use crate::{")?;
-					for import in import_set {
+					for import in imports {
 						fmt.write_str(import)?;
 						fmt.write_str(", ")?;
 					}

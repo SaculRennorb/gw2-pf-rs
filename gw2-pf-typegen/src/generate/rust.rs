@@ -26,11 +26,20 @@ impl<'a, 'b> RecursiveTypeReferences<'a, 'b> {
 	fn append_children(&mut self, _type : &'b Type<'a>) {
 		for field in _type.fields.iter() {
 			match field.detail {
-				FieldDetail::Array      { ref inner, .. } | 
-				FieldDetail::PtrArray   { ref inner, .. } | 
-				FieldDetail::FixedArray { ref inner, .. } | 
-				FieldDetail::SmallArray { ref inner, .. } =>  {
+				FieldDetail::Array        { ref inner, .. } | 
+				FieldDetail::PtrArray     { ref inner, .. } | 
+				FieldDetail::FixedArray   { ref inner, .. } | 
+				FieldDetail::SmallArray   { ref inner, .. } |
+				FieldDetail::Inline       { ref inner }     | 
+				FieldDetail::Reference    { ref inner }     |
+				FieldDetail::StructCommon { ref inner }     =>  {
 					if !is_primitive_type(inner) {
+						self.append(inner);
+						self.append_children(inner);
+					}
+				},
+				FieldDetail::Variant { ref variants } => {
+					for inner in variants {
 						self.append(inner);
 						self.append_children(inner);
 					}
@@ -83,8 +92,8 @@ fn translate_type_name<'a>(_type : &Type<'a>) -> &'a str {
 		"double"   => "f64",
 		"dword"    => "u32",
 		"dword4"   => "[u32; 4]",
-		//"filename" => "??",
-		//"fileref"  => "",
+		"filename" => "filename ?",
+		"fileref"  => "fielref ?",
 		"float"    => "f32",
 		"float2"   => "[f32; 2]",
 		"float3"   => "[f32; 3]",
@@ -103,8 +112,12 @@ fn translate_type_name<'a>(_type : &Type<'a>) -> &'a str {
 fn format_field_type<'a>(field : &FieldDetail<'a>) -> Cow<'a, str> {
 	match field {
 		FieldDetail::FixedArray{inner, size} => Cow::Owned(format!("[{}; {size}]", translate_type_name(inner))),
+		FieldDetail::SmallArray{inner, ..}   |
 		FieldDetail::Array{inner, ..}        => Cow::Owned(format!("Vec<{}>", translate_type_name(inner))),
 		FieldDetail::PtrArray{inner, ..}     => Cow::Owned(format!("Vec<&{}>", translate_type_name(inner))),
+		FieldDetail::Reference{inner}        |
+		FieldDetail::Inline{inner}           |
+		FieldDetail::StructCommon{inner}     => Cow::Borrowed(translate_type_name(inner)),
 		FieldDetail::Byte                    => Cow::Borrowed("u8"),
 		FieldDetail::Byte4                   => Cow::Borrowed("[u8; 4]"),
 		FieldDetail::Double                  => Cow::Borrowed("f64"),
@@ -114,11 +127,9 @@ fn format_field_type<'a>(field : &FieldDetail<'a>) -> Cow<'a, str> {
 		FieldDetail::Float2                  => Cow::Borrowed("[f32; 2]"),
 		FieldDetail::Float3                  => Cow::Borrowed("[f32; 3]"),
 		FieldDetail::Float4                  => Cow::Borrowed("[f32; 4]"),
-		FieldDetail::Reference{..}           => Cow::Borrowed("can't represent reference"),
 		FieldDetail::QuadWord                => Cow::Borrowed("u64"),
 		FieldDetail::WideCString             => Cow::Borrowed("WString"),
 		FieldDetail::CString                 => Cow::Borrowed("CString"),
-		FieldDetail::Inline{..}              => Cow::Borrowed("can't represent inline"),
 		FieldDetail::Word                    => Cow::Borrowed("u16"),
 		FieldDetail::UUID                    => Cow::Borrowed("UUID"),
 		FieldDetail::Byte3                   => Cow::Borrowed("[u8; 3]"),
@@ -126,9 +137,11 @@ fn format_field_type<'a>(field : &FieldDetail<'a>) -> Cow<'a, str> {
 		FieldDetail::DoubleWord4             => Cow::Borrowed("[u32; 4]"),
 		FieldDetail::DoubleWord3             => Cow::Borrowed("[u32; 3]"),
 		FieldDetail::FileRef                 => Cow::Borrowed("cant represent fileref"),
-		FieldDetail::Variant{..}             => Cow::Borrowed("can't represent variant"),
-		FieldDetail::StructCommon{..}        => Cow::Borrowed("can't represent structcommon"),
-		FieldDetail::SmallArray{inner, ..}   => Cow::Owned(format!("Vec<{}>", translate_type_name(inner))),
+		FieldDetail::Variant{..}             => {
+			let hasher = &mut DefaultHasher::default();
+			field.hash(hasher);
+			Cow::Owned(format!("Variant_{}", hasher.finish()))
+		},
 		FieldDetail::End                     => unreachable!(),
 	}
 }
@@ -157,37 +170,45 @@ fn is_primitive_type(_type : &Type) -> bool {
 	}
 }
 
-fn get_required_import_for_type<'a>(_type : &Type<'a>) -> Option<&'static str> {
+pub fn add_required_imports_for_type<'a>(imports : &mut HashSet<&'a str>, _type : &Type<'a>) {
 	match _type.name {
-		//"filename" => "??",
-		//"fileref"  => "",
-		"token"    => Some("Token"),
-		"wchar *"  => Some("WideCString"),
-		"char *"   => Some("CString"),
-		_=> None,
+		"filename" => { imports.insert("cant import filename"); },
+		"fileref"  => { imports.insert("cant import fielref"); },
+		"token"    => { imports.insert("Token"); },
+		"wchar *"  => { imports.insert("WideCString"); },
+		"char *"   => { imports.insert("CString"); },
+		_ => {
+			for field in _type.fields.iter() {
+				add_required_imports_for_field(imports, field);
+			}
+		},
 	}
 }
 
-pub fn get_required_import_for_field<'a>(field : &FieldDetail<'a>) -> Option<&'static str> {
+pub fn add_required_imports_for_field<'a>(imports : &mut HashSet<&'a str>, field : &FieldDetail<'a>) {
 	match field {
-		FieldDetail::FixedArray{ref inner, ..} => get_required_import_for_type(inner),
-		FieldDetail::Array{ref inner, ..}      => get_required_import_for_type(inner),
-		FieldDetail::PtrArray{ref inner, ..}   => get_required_import_for_type(inner),
-		FieldDetail::FileName                  => Some("can't represent filename"),
-		FieldDetail::Reference{..}             => Some("can't represent reference"),
-		FieldDetail::WideCString               => Some("WString"),
-		FieldDetail::CString                   => Some("CString"),
-		FieldDetail::Inline{..}                => Some("can't represent inline"),
-		FieldDetail::UUID                      => Some("UUID"),
-		FieldDetail::FileRef                   => Some("can't represent fileref"),
-		FieldDetail::Variant{..}               => Some("can't represent variant"),
-		FieldDetail::StructCommon{..}          => Some("can't represent structcommon"),
-		FieldDetail::SmallArray{ref inner, ..} => get_required_import_for_type(inner),
-		_ => None,
+		FieldDetail::FixedArray{ref inner, ..} |
+		FieldDetail::Array{ref inner, ..}      |
+		FieldDetail::PtrArray{ref inner, ..}   |
+		FieldDetail::SmallArray{ref inner, ..} |
+		FieldDetail::Inline{ref inner}         |
+		FieldDetail::Reference{ref inner}      |
+		FieldDetail::StructCommon{ref inner}   => add_required_imports_for_type(imports, inner),
+		FieldDetail::FileName                  => { imports.insert("can't represent filename"); },
+		FieldDetail::WideCString               => { imports.insert("WString"); },
+		FieldDetail::CString                   => { imports.insert("CString"); },
+		FieldDetail::UUID                      => { imports.insert("UUID"); },
+		FieldDetail::FileRef                   => { imports.insert("can't represent fileref"); },
+		FieldDetail::Variant{ ref variants }   => {
+			for inner in variants {
+				add_required_imports_for_type(imports, inner);
+			}
+		},
+		_ => {},
 	}
 }
 
 
-use std::{borrow::Cow, collections::{HashSet, VecDeque}, fmt::{Formatter, Result as FmtResult, Write}};
+use std::{borrow::Cow, collections::HashSet, fmt::{Formatter, Result as FmtResult, Write}, hash::{DefaultHasher, Hash, Hasher}};
 use crate::structure::{Chunk, FieldDetail, Type};
 

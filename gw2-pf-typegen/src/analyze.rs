@@ -146,11 +146,19 @@ impl<'a> Parser<'a> {
 			13 => FieldDetail::Float2,
 			14 => FieldDetail::Float3,
 			15 => FieldDetail::Float4,
-			16 => FieldDetail::Reference {},
+			16 => {
+				let offset = input.eat_rva_as_offset(&self.exe)?;
+				let inner = self.parse_type(&mut self.exe.reader_from_offset(offset)?)?;
+				FieldDetail::Reference { inner }
+			},
 			17 => FieldDetail::QuadWord,
 			18 => FieldDetail::WideCString,
 			19 => FieldDetail::CString,
-			20 => FieldDetail::Inline {},
+			20 => {
+				let offset = input.eat_rva_as_offset(&self.exe)?;
+				let inner = self.parse_type(&mut self.exe.reader_from_offset(offset)?)?;
+				FieldDetail::Inline { inner }
+			},
 			21 => FieldDetail::Word,
 			22 => FieldDetail::UUID,
 			23 => FieldDetail::Byte3,
@@ -158,8 +166,24 @@ impl<'a> Parser<'a> {
 			25 => FieldDetail::DoubleWord4,
 			26 => FieldDetail::DoubleWord3,
 			27 => FieldDetail::FileRef,
-			28 => FieldDetail::Variant {},
-			29 => FieldDetail::StructCommon {},
+			28 => {
+				let offset = input.eat_rva_as_offset(&self.exe)?;
+				let size = input.eat_u64()? as usize;
+
+				let input = &mut self.exe.reader_from_offset(offset)?;
+				let mut variants = Vec::new();
+				for i in 0..size {
+					let variant_offset = input.eat_rva_as_offset(&self.exe)?;
+					let input = &mut self.exe.reader_from_offset(variant_offset)?;
+					variants.push(self.parse_type(input)?);
+				}
+				FieldDetail::Variant { variants }
+			},
+			29 => {
+				let offset = input.eat_rva_as_offset(&self.exe)?;
+				let inner = self.parse_type(&mut self.exe.reader_from_offset(offset)?)?;
+				FieldDetail::StructCommon { inner }
+			},
 			33 => {
 				let offset = input.eat_rva_as_offset(&self.exe)?;
 				let size = input.eat_u64()? as usize;

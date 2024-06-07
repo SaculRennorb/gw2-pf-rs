@@ -21,8 +21,8 @@ impl<'inp, F : Magic + ParseVersioned<'inp>> PackFileReader<'inp, F> {
 #[repr(C)]
 pub struct PFHeader {
 	pub magic       : u16,
-	pub version     : u16,
 	pub flags       : u16,
+	pub version     : u16, // wrong, should be reserved. there is no version
 	pub header_size : u16,
 	pub file_type   : u32,
 }
