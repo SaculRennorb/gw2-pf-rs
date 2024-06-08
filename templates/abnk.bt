@@ -29,6 +29,7 @@ struct Array {
 
 struct Ptr {
     u32 offset;
+    u32 offset;
 };
 
 
@@ -86,7 +87,7 @@ struct ASNDFile {
     u8 reserved;
     u8 reserved;
     Array audio_data; //bytes
-} file;
+} file <bgcolor=cOrange>;
 
 if(file.audio_data.length > 0) {
     FSeek(startof(file.audio_data.offset) + file.audio_data.offset);

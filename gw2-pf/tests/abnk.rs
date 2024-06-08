@@ -15,6 +15,18 @@ fn extract_asnd_179764() {
 }
 
 #[test] #[ignore = "produces files"]
+fn extract_asnd_2324279() {
+	let data = {
+		let mut file = File::open("tests/res/2324279.abnk").unwrap();
+		let mut v = Vec::new();
+		file.read_to_end(&mut v).unwrap();
+		v
+	};
+
+	extract_asnd(&data);
+}
+
+#[test] #[ignore = "produces files"]
 fn extract_asnd_all() {
 	for path in std::fs::read_dir("tests/res").unwrap() {
 		let path = path.unwrap();
@@ -41,6 +53,7 @@ fn extract_asnd(data : &[u8]) {
 
 	assert!(file.next().is_none());
 	for asnd_file in &chunk.files {
+		if asnd_file.audio_data.is_empty() { continue }
 		let inner_file = dut::pf::PackFileReader::<dut::formats::ASND>::from_bytes(asnd_file.audio_data).map_err(|e| e.to_string()).unwrap();
 		for (i, chunk) in inner_file.into_iter().enumerate() {
 			let asnd_chunk = chunk.unwrap();
@@ -90,6 +103,7 @@ fn print_type() {
 			let abnk = chunk.unwrap();
 
 			for asnd_file in &abnk.files {
+				if asnd_file.audio_data.is_empty() { continue }
 				let inner_file = dut::pf::PackFileReader::<dut::formats::ASND>::from_bytes(asnd_file.audio_data).map_err(|e| e.to_string()).unwrap();
 				for chunk in inner_file {
 					let asnd = chunk.unwrap();

@@ -24,9 +24,9 @@ fn format_asnd() {
 		buffer
 	};
 
-	let eula = dut::analyze::locate_chunks(&data).filter(|c| c.magic == "ASND").next().unwrap();
+	let chunk_info = dut::analyze::locate_chunks(&data).filter(|c| c.magic == "ASND").next().unwrap();
 
-	println!("{}", Wrapper(eula));
+	println!("{}", Wrapper(chunk_info));
 
 	struct Wrapper<'a>(dut::structure::Chunk<'a>);
 	impl std::fmt::Display for Wrapper<'_> {

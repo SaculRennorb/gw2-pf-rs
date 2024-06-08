@@ -139,6 +139,7 @@ impl<'inp, T : Parse<'inp>> Parse<'inp> for Option<T> {
 	const BINARY_SIZE : BinarySize = BinarySize::ptrs(1);
 	fn parse(input : &mut Input<'inp>) -> Result<Self> {
 		let offset = input.eat_offset()?;
+		#[cfg(feature = "debug-parsing")] eprintln!(" ptr: offset: {offset:x}");
 		if offset == 0 { Ok(None) }
 		else { T::parse(&mut input.clone_with_offset(offset)?).map(Some) }
 	}
@@ -149,6 +150,7 @@ impl<'inp, T : Parse<'inp>> Parse<'inp> for Vec<T> {
 	fn parse(input : &mut Input<'inp>) -> Result<Self> {
 		let length = u32::parse(input)? as usize;
 		let offset = input.eat_offset()?;
+		#[cfg(feature = "debug-parsing")] eprintln!(" vec: offset: {offset:x}, len: {length}");
 		match length {
 			0 => Ok(vec![]),
 			//todo length check
@@ -170,6 +172,7 @@ impl<'inp, T : Parse<'inp>> Parse<'inp> for Vec<T> {
 pub fn parse_null_terminated_vec<'inp, T : Parse<'inp>>(input : &mut Input<'inp>) -> Result<Vec<T>> {
 	let length = u32::parse(input)? as usize;
 	let offset = input.eat_offset()?;
+	#[cfg(feature = "debug-parsing")] eprintln!(" null term vec: offset: {offset:x}, len: {length}");
 	match length { 
 		0 => Ok(vec![]),
 		//todo length check
@@ -199,6 +202,7 @@ impl<'inp> Parse<'inp> for &'inp [u8] {
 	fn parse(input : &mut Input<'inp>) -> Result<Self> {
 		let length = u32::parse(input)? as usize;
 		let offset = input.eat_offset()?;
+		#[cfg(feature = "debug-parsing")] eprintln!(" vec: offset: {offset:x}, len: {length}");
 		match length { 
 			0 => Ok(&[]),
 			length if input.remaining.len() < offset + length => Err(Error::DataTooShort {

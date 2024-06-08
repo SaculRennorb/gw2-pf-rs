@@ -5,3 +5,6 @@ edition = "2021"
 
 [dependencies]
 gw2-pf-rs-derive = { path = "../gw2-pf-derive" }
+
+[features]
+debug-parsing = []

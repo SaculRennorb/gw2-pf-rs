@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use quote::{format_ident, quote, quote_spanned};
+use quote::{quote, quote_spanned};
 use syn::{parse::Parse, parse_macro_input, punctuated::Punctuated, spanned::Spanned, DeriveInput, Fields};
 
 
@@ -71,17 +71,19 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 					quote!{ #first #(#sizes)* }
 				}
 			};
-			
+
+			let root_ident_str = root_ident.to_string();
 
 			let fields = fields.named.iter().map(|f| {
 				let ident = f.ident.as_ref().unwrap();
+				let ident_str = ident.to_string();
 				let span = f.ty.span();
 
 				if f.attrs.iter().any(|attr| attr.meta.path().is_ident("null_terminated")) {
-					quote_spanned!(span => #ident: crate::parse::parse_null_terminated_vec(input)?)
+					quote_spanned!(span => #ident: { #[cfg(feature = "debug-parsing")] eprintln!("entering {}.{} {:x?}", #root_ident_str, #ident_str, &input.remaining[..std::cmp::min(input.remaining.len(), 8)]); crate::parse::parse_null_terminated_vec(input)? })
 				}
 				else {
-					quote_spanned!(span => #ident: Parse::parse(input)?)
+					quote_spanned!(span => #ident: { #[cfg(feature = "debug-parsing")] eprintln!("entering {}.{} {:x?}", #root_ident_str, #ident_str, &input.remaining[..std::cmp::min(input.remaining.len(), 8)]); Parse::parse(input)? })
 				}
 			});
 
@@ -91,6 +93,7 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 				impl #input_lt crate::parse::Parse #input_lt for #root_ident #root_generics {
 					const BINARY_SIZE : crate::parse::BinarySize = #sizes;
 					fn parse(input : &mut crate::parse::Input #input_lt) -> Result<Self, crate::parse::Error> {
+						#[cfg(feature = "debug-parsing")] eprintln!("[[begin parsing {}, is64: {}]]", #root_ident_str, input.is_64_bit);
 						use crate::parse::Parse;
 						Ok(Self {
 							#(#fields),*
@@ -111,13 +114,14 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 						let field_ident = &f.ident;
 						if let Some(version_attr) = f.attrs.iter().find(|attr| matches!(attr.meta, syn::Meta::List(ref meta) if meta.path.is_ident("v"))) {
 							let version = version_attr.parse_args_with(syn::LitInt::parse).unwrap();
+							let ident_str = f.ident.to_string();
 
 							let tuple_field = match f.fields {
 								Fields::Unnamed(ref field) => { &field.unnamed[0] },
 								_ => todo!(),
 							};
 							let span = tuple_field.span();
-							Some(quote_spanned!(span => #version => Parse::parse(input).map(Self::#field_ident)))
+							Some(quote_spanned!(span => #version => { #[cfg(feature = "debug-parsing")] eprintln!("entering {} {:x?}", #ident_str, &input.remaining[..std::cmp::min(input.remaining.len(), 8)]); Parse::parse(input).map(Self::#field_ident) }))
 						}
 						else{
 							result.extend(syn::Error::new(field_ident.span(), "missing version attribute, add `#[v(..)]`").to_compile_error());
@@ -126,12 +130,14 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 					});
 
 					let own_magic = syn::LitByteStr::new(root_ident.to_string().as_bytes(), root_ident.span());
+					let root_ident_str = root_ident.to_string();
 
 					result = quote! {
 						#[automatically_derived]
 						impl #input_lt crate::parse::ParseVersioned #input_lt for #root_ident #root_generics {
 							type Output = Self;
 							fn parse(version : u16, input : &mut crate::parse::Input #input_lt) -> crate::parse::Result<Self::Output> {
+								#[cfg(feature = "debug-parsing")] eprintln!("[[begin parsing {}]]", #root_ident_str);
 								use crate::parse::Parse;
 								match version {
 									#(#fields),*,
@@ -143,6 +149,7 @@ pub fn derive_parse(input : TokenStream) -> TokenStream {
 						#[automatically_derived]
 						impl #input_lt crate::parse::ParseMagicVariant #input_lt for #root_ident #root_generics {
 							fn parse(magic : u32, version : u16, input : &mut crate::parse::Input #input_lt) -> crate::parse::Result<Self> {
+								#[cfg(feature = "debug-parsing")] eprintln!("[[begin parsing {}]]", #root_ident_str);
 								match magic {
 									<Self as crate::pf::Magic>::MAGIC => <Self as crate::parse::ParseVersioned>::parse(version, input),
 									_ => Err(crate::parse::Error::UnknownMagic { r#type: std::any::type_name::<#root_ident>(), actual: magic }),

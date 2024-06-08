@@ -104,13 +104,16 @@ pub fn export_type<'a>(_type : &Type<'a>, fmt : &mut Formatter) -> FmtResult {
 				fmt.write_str(" : ")?;
 				fmt.write_str(&format_type_name(field))?;
 				match field._type {
+					Type::Array { kind: ArrayKind::DynamicSmall { .. }, .. } => { fmt.write_str(", // small")? } ,
+					_ => fmt.write_str(",")?,
+				}
+				match field._type {
 					Type::Array { kind: ArrayKind::Dynamic { size }, .. } |
 					Type::Array { kind: ArrayKind::DynamicSmall { size }, .. } |
 					Type::Array { kind: ArrayKind::Pointers { size }, .. } if size > 0 => {
-						fmt.write_fmt(format_args!(", // size: {size}\n"))?;
+						fmt.write_fmt(format_args!(" size: {size}\n"))?;
 					},
-		
-					_ => fmt.write_str(",\n")?,
+					_ => fmt.write_char('\n')?,
 				}
 			}
 			fmt.write_str("}\n")
