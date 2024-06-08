@@ -106,6 +106,13 @@ impl Input<'_> {
 	}
 }
 
+impl<'inp> Parse<'inp> for () {
+	const BINARY_SIZE : BinarySize = BinarySize::fixed(0);
+	fn parse(_input : &mut Input<'inp>) -> Result<Self> {
+		Ok(())
+	}
+}
+
 macro_rules! impl_le_bit_prase {
 	($($type:ty),*) => {$(
 		impl<'inp> Parse<'inp> for $type {
@@ -127,6 +134,7 @@ impl_le_bit_prase! {
 	         f32, f64
 }
 
+//NOTE(Rennorb): Currently we always treat options as pointers, this might need to change.
 impl<'inp, T : Parse<'inp>> Parse<'inp> for Option<T> {
 	const BINARY_SIZE : BinarySize = BinarySize::ptrs(1);
 	fn parse(input : &mut Input<'inp>) -> Result<Self> {
@@ -194,7 +202,7 @@ impl<'inp> Parse<'inp> for &'inp [u8] {
 		match length { 
 			0 => Ok(&[]),
 			length if input.remaining.len() < offset + length => Err(Error::DataTooShort {
-				r#type: Some(std::any::type_name::<Self>()), required: length, actual: input.remaining.len(),
+				r#type: Some(std::any::type_name::<Self>()), required: offset + length, actual: input.remaining.len(),
 			}),
 			length => Ok(&input.remaining[offset..][..length]),
 		}
@@ -210,16 +218,12 @@ pub trait ParseMagicVariant<'inp> : Sized {
 	fn parse(magic : u32, version : u16, input : &mut Input<'inp>) -> Result<Self>;
 }
 
-pub trait ChunkVariant<'inp> : Sized + ParseMagicVariant<'inp> {
-	fn parse_sequence(input : Input<'inp>) -> ChunkIter<'inp, Self>;
-}
-
-pub struct ChunkIter<'inp, V : ChunkVariant<'inp> + ParseMagicVariant<'inp>> {
+pub struct ChunkIter<'inp, V : ParseMagicVariant<'inp>> {
 	pub input : Input<'inp>,
 	pub _p : std::marker::PhantomData<V>
 }
 
-impl<'inp, V : ChunkVariant<'inp> + ParseMagicVariant<'inp>> Iterator for ChunkIter<'inp, V> {
+impl<'inp, V : ParseMagicVariant<'inp>> Iterator for ChunkIter<'inp, V> {
 	type Item = Result<V>;
 
 	fn next(&mut self) -> Option<Self::Item> {

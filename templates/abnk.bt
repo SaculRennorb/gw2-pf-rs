@@ -34,7 +34,7 @@ struct Ptr {
 
 struct PFHeader {
 	char magic[2];
-	u16 version;
+	u16 flags <format=binary>;
 	u16 _reserved <hidden=true>;
 	u16 header_size;
 	char file_type[4];

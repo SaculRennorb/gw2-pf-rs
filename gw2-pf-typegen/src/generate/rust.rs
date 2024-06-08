@@ -134,9 +134,10 @@ fn format_type_name<'a>(_type : &Type<'a>) -> Cow<'a, str> {
 		Type::UUID     => Cow::Borrowed("UUID"),
 		Type::CString { wide: false } => Cow::Borrowed("CString"), //turn into annotations?
 		Type::CString { wide: true  } => Cow::Borrowed("WideCString"), //turn into annotations?
+		Type::Reference { inner, kind: ReferenceKind::Optional } => Cow::Owned(format!("Option<{}>", format_type_name(inner))),
 		Type::Reference { inner, .. } => format_type_name(inner),
 		Type::Array { inner, kind: ArrayKind::Inline { size } } => Cow::Owned(format!("[{}; {size}]", format_type_name(inner))),
-		Type::Array { inner, kind: ArrayKind::Pointers { .. } } => Cow::Owned(format!("Vec<*{}>", format_type_name(inner))), //turn size into annotations?
+		Type::Array { inner, kind: ArrayKind::Pointers { .. } } => Cow::Owned(format!("Vec<Option<{}>>", format_type_name(inner))), //turn size into annotations?
 		Type::Array { inner, .. } => {
 			match inner.as_ref() {
 				Type::U8 => Cow::Borrowed("&'a [u8]"), //turn size into annotations?
@@ -186,5 +187,5 @@ pub fn add_required_imports_for_type<'a>(imports : &mut HashSet<&'a str>, _type 
 
 
 use std::{borrow::Cow, collections::HashSet, fmt::{Formatter, Result as FmtResult, Write}, hash::{DefaultHasher, Hash, Hasher}};
-use crate::structure::{ArrayKind, Chunk, Type};
+use crate::structure::{ArrayKind, Chunk, ReferenceKind, Type};
 

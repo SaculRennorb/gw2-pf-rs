@@ -2,7 +2,7 @@
 pub struct WaveformData<'a> {
 	pub length        : f32,
 	pub offset        : f32,
-	   _reserved_data : u32, //ptr
+	   _reserved_data : Option<()>,
 	   _reserved1     : u32,
 	   _reserved2     : u32,
 	pub crc           : u32,

@@ -2,8 +2,8 @@ use std::{fs::File, io::Read};
 use gw2_pf_rs as dut;
 
 
-#[test]
-fn deserialize() {
+#[test] #[ignore = "produces files"]
+fn extract_asnd_179764() {
 	let data = {
 		let mut file = File::open("tests/res/179764.abnk").unwrap();
 		let mut v = Vec::new();
@@ -11,23 +11,50 @@ fn deserialize() {
 		v
 	};
 
+	extract_asnd(&data);
+}
+
+#[test] #[ignore = "produces files"]
+fn extract_asnd_all() {
+	for path in std::fs::read_dir("tests/res").unwrap() {
+		let path = path.unwrap();
+		if path.file_type().unwrap().is_dir() { continue }
+		let filename = path.file_name();
+		let filename = filename.to_str().unwrap();
+		if !filename.ends_with(".abnk") { continue }
+		println!("{filename}");
+
+		let data = {
+			let mut file = File::open(format!("tests/res/{filename}")).unwrap();
+			let mut v = Vec::new();
+			file.read_to_end(&mut v).unwrap();
+			v
+		};
+
+		extract_asnd(&data);
+	}
+}
+
+fn extract_asnd(data : &[u8]) {
 	let file = &mut dut::pf::PackFileReader::<dut::formats::ABNK>::from_bytes(&data).map_err(|e| e.to_string()).unwrap();
-	let file = file.iter();
 	let chunk = file.next().unwrap().map_err(|e| e.to_string()).unwrap();
 
 	assert!(file.next().is_none());
-	assert_eq!(chunk.files.len(), 10);
-	for file in &chunk.files {
-		let inner_file = dut::pf::PackFileReader::<dut::formats::ASND>::from_bytes(file.audio_data).map_err(|e| e.to_string()).unwrap();
+	for asnd_file in &chunk.files {
+		let inner_file = dut::pf::PackFileReader::<dut::formats::ASND>::from_bytes(asnd_file.audio_data).map_err(|e| e.to_string()).unwrap();
 		for (i, chunk) in inner_file.into_iter().enumerate() {
-			let chunk = chunk.unwrap();
+			let asnd_chunk = chunk.unwrap();
 
-			let mp3 = chunk.audio_data;
+			let mp3 = asnd_chunk.audio_data;
 			if &mp3[..2] != &[0xff, 0xfb] {
-				println!("{:#?} unknown format {:x?}", chunk, &mp3[..2]);
+				println!("vid: {}/{i}, unknown format {:x?}", asnd_file.voice_id, &mp3[..2]);
+				continue 
+			}
+			else {
+				println!("vid: {}/{i} OFlg: {:b}, IFlg: {:b}, Form: {}, Bytes: {:x?}", asnd_file.voice_id, asnd_file.flags, asnd_chunk.flags, asnd_chunk.format, &asnd_chunk.audio_data[..2]);
 			}
 			
-			let dst_file = &mut std::fs::File::options().create(true).truncate(true).write(true).open(format!("tests/out/{}_{}.mp3", file.voice_id, i)).unwrap();
+			let dst_file = &mut std::fs::File::options().create(true).truncate(true).write(true).open(format!("tests/out/{}_{}.mp3", asnd_file.voice_id, i)).unwrap();
 			use std::io::Write;
 			dst_file.write_all(mp3).unwrap();
 		}

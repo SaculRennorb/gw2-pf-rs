@@ -1,5 +1,3 @@
-use std::mem::Discriminant;
-
 #[derive(Debug)]
 pub struct Chunk<'a> {
 	pub magic    : &'a str, //can be 4 or 3 bytes long
@@ -38,7 +36,7 @@ pub enum Type<'a> {
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
-pub enum ReferenceKind { Default, Inline, StructCommon }
+pub enum ReferenceKind { Optional, Inline, StructCommon }
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub enum ArrayKind {
 	/// I have no idea why this has a size field. Seems to always be 0

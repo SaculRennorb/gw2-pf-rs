@@ -183,7 +183,7 @@ impl<'a> Parser<'a> {
 				let offset = input.eat_rva_as_offset(&self.exe)?;
 				let inner = self.parse_type(&mut self.exe.reader_from_offset(offset)?)?;
 				match _type {
-					FT::Reference    => Type::Reference { inner: Box::new(inner), kind: ReferenceKind::Default },
+					FT::Reference    => Type::Reference { inner: Box::new(inner), kind: ReferenceKind::Optional },
 					FT::Inline       => Type::Reference { inner: Box::new(inner), kind: ReferenceKind::Inline },
 					FT::StructCommon => Type::Reference { inner: Box::new(inner), kind: ReferenceKind::StructCommon },
 					_ => unreachable!()

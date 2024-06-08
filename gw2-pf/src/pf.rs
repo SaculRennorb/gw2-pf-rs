@@ -1,20 +1,20 @@
-use crate::parse::{Error, Input, ParseVersioned, Result};
+use crate::parse::{ChunkIter, Error, Input, ParseMagicVariant, Result};
 
-pub struct PackFileReader<'inp, F : Magic + ParseVersioned<'inp>> {
+pub struct PackFileReader<'inp, F : Magic + ParseMagicVariant<'inp>> {
 	_p : std::marker::PhantomData<&'inp F>,
 }
 
-impl<'inp, F : Magic + ParseVersioned<'inp>> PackFileReader<'inp, F> {
-	pub fn from_bytes(bytes : &'inp [u8]) -> Result<F::Output> {
+impl<'inp, F : Magic + ParseMagicVariant<'inp>> PackFileReader<'inp, F> {
+	pub fn from_bytes(bytes : &'inp [u8]) -> Result<ChunkIter<F>> {
 		if bytes.len() < std::mem::size_of::<PFHeader>() { return Err(Error::to_short::<PFHeader>(bytes.len())) }
 
 		let header = unsafe{ bytes.as_ptr().cast::<PFHeader>().as_ref().unwrap() };
 		if header.magic != PF_MAGIC { return Err(Error::InvalidFileType { r#type: std::any::type_name::<PFHeader>(), expected: PF_MAGIC as u32, actual: header.magic as u32 }); }
 		if header.file_type != F::MAGIC { return Err(Error::wrong_magic::<F>(header.file_type)) }
 
-		let input = &mut Input{ remaining: &bytes[header.header_size as usize..], is_64_bit: header.flags & PF_FLAG_HAS_64BIT_PTRS != 0 };
+		let input = Input{ remaining: &bytes[header.header_size as usize..], is_64_bit: header.flags & PF_FLAG_HAS_64BIT_PTRS != 0 };
 
-		<F as crate::parse::ParseVersioned>::parse(header.version, input)
+		Ok(ChunkIter{ input, _p : std::marker::PhantomData })
 	}
 }
 
@@ -22,7 +22,7 @@ impl<'inp, F : Magic + ParseVersioned<'inp>> PackFileReader<'inp, F> {
 pub struct PFHeader {
 	pub magic       : u16,
 	pub flags       : u16,
-	pub version     : u16, // wrong, should be reserved. there is no version
+	_reserved       : u16,
 	pub header_size : u16,
 	pub file_type   : u32,
 }
