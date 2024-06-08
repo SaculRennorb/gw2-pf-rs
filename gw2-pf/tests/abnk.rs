@@ -61,7 +61,7 @@ fn extract_asnd(data : &[u8]) {
 			let mp3 = asnd_chunk.audio_data;
 			let ext;
 			if &mp3[..2] != &[0xff, 0xfb] {
-				println!("vid: {}/{i}, unknown format {:x?}", asnd_file.voice_id, &mp3[..2]);
+				println!("vid: {}/{i} OFlg: {:b}, IFlg: {:b}, Form: {}, Bytes: {:x?} unknown format", asnd_file.voice_id, asnd_file.flags, asnd_chunk.flags, asnd_chunk.format, &asnd_chunk.audio_data[..2]);
 				ext = "bin";
 			}
 			else {
