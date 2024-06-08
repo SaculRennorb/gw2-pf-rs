@@ -74,7 +74,7 @@ impl<'a> Parser<'a> {
 		
 		if versions.is_empty() { return Err(Error::NoChunks) }
 
-		let holds_input_references = versions.iter().any(|c| c.holds_input_references);	
+		let holds_input_references = versions.iter().any(|c| c.holds_input_references());
 		let chunk = Chunk { magic, versions, holds_input_references };
 	
 		Ok((chunk, initial_len - input.remaining.len()))
@@ -104,97 +104,170 @@ impl<'a> Parser<'a> {
 		let mut holds_input_references = false;
 
 		let name = loop {
-			let field = self.prase_field(input)?;
-			if matches!(field.detail, FieldDetail::End) { break field.name }
-			holds_input_references |= field.holds_input_references;
-			fields.push(field);
+			match self.prase_field(input)? { 
+				FieldParseResult::Field(field) => {
+					holds_input_references |= field.holds_input_references();
+					fields.push(field);
+				},
+				FieldParseResult::TypeName(name) => {
+					break name
+				},
+			}
 		};
 
-		Ok(Type { name, fields, holds_input_references })
+		Ok(match name {
+			"byte"     => Type::U8,
+			"dword"    => Type::U32,
+			"word"     => Type::U16,
+			"qword"    => Type::U64,
+			"float"    => Type::F32,
+			"double"   => Type::F64,
+			"byte3"    => Type::inline_array(Type::U8, 3),
+			"byte4"    => Type::inline_array(Type::U8, 4),
+			"word3"    => Type::inline_array(Type::U16,3),
+			"dword4"   => Type::inline_array(Type::U32,4),
+			"float2"   => Type::inline_array(Type::F32,2),
+			"float3"   => Type::inline_array(Type::F32,3),
+			"float4"   => Type::inline_array(Type::F32,4),
+			"filename" => Type::FileName,
+			"fileref"  => Type::FileRef,
+			"token"    => Type::Token,
+			"char *"   => Type::CString { wide: false },
+			"wchar *"  => Type::CString { wide: true },
+			_ => Type::Composite { name, fields, holds_input_references },
+		})
 	}
 
-	pub fn prase_field(&self, input : &mut Reader<'a>) -> Result<Field<'a>> {
+	pub fn prase_field(&self, input : &mut Reader<'a>) -> Result<FieldParseResult<'a>> {
 		let input = &mut input.eat_slice(32)?; // all fields are 32 byte
 
-		let _type = input.eat_u16()?; // 0-2
+		use BuiltinFieldType as FT;
+		let _type = input.eat_u16()?.try_into()?; // 0-2
 		input.eat_u16()?; // 2-4
 		input.eat_u32()?; // 4-8
 		let name = self.exe.get_str_at(input.eat_rva_as_offset(&self.exe)?)?;
 
-		let mut holds_input_references = false;
-
-		let detail = match _type {
-			0 => FieldDetail::End,
-			1 | 2 | 33 => {
+		let _type = match _type {
+			FT::Byte        => Type::U8,
+			FT::Word        => Type::U16,
+			FT::DWord       => Type::U32,
+			FT::QWord       => Type::U64,
+			FT::Float       => Type::F32,
+			FT::Double      => Type::F64,
+			FT::FileName    => Type::FileName,
+			FT::FileRef     => Type::FileRef,
+			FT::Byte3       => Type::inline_array(Type::U8, 3),
+			FT::Byte4       => Type::inline_array(Type::U8, 4),
+			FT::Word3       => Type::inline_array(Type::U16, 3),
+			FT::DWord2      => Type::inline_array(Type::U32, 2),
+			FT::DWord4      => Type::inline_array(Type::U32, 4),
+			FT::Float2      => Type::inline_array(Type::F32, 2),
+			FT::Float3      => Type::inline_array(Type::F32, 3),
+			FT::Float4      => Type::inline_array(Type::F32, 4),
+			FT::UUID        => Type::UUID,
+			FT::CString     => Type::CString{ wide: false },
+			FT::WideCString => Type::CString { wide: true },
+			FT::Array | FT::FixedArray | FT::SmallArray | FT::PtrArray => {
 				let offset = input.eat_rva_as_offset(&self.exe)?;
 				let size = input.eat_u64()? as usize;
 				let inner = self.parse_type(&mut self.exe.reader_from_offset(offset)?)?;
-				//NOTe(Rennorb): Byte arrays should not be copied over, their derserialize should just hold a pointer to the original data. 
-				holds_input_references = inner.holds_input_references || inner.name == "byte";
 				match _type {
-					 1 => FieldDetail::FixedArray { size, inner },
-					 2 => FieldDetail::Array      { size, inner },
-					33 => FieldDetail::SmallArray { size, inner },
+					FT::FixedArray => Type::Array { inner: Box::new(inner), kind: ArrayKind::Fixed        { size }},
+					FT::Array      => Type::Array { inner: Box::new(inner), kind: ArrayKind::Dynamic      { size }},
+					FT::SmallArray => Type::Array { inner: Box::new(inner), kind: ArrayKind::DynamicSmall { size }},
+					FT::PtrArray   => Type::Array { inner: Box::new(inner), kind: ArrayKind::Pointers     { size }},
 					_ => unreachable!()
 				}
 			},
-			3 => {
-				let offset = input.eat_rva_as_offset(&self.exe)?;
-				let size = input.eat_u64()? as usize;
-				let inner = self.parse_type(&mut self.exe.reader_from_offset(offset)?)?;
-				holds_input_references = inner.holds_input_references;
-				FieldDetail::PtrArray   { size, inner }
-			},
-			5 => FieldDetail::Byte,
-			6 => FieldDetail::Byte4,
-			7 => FieldDetail::Double,
-			10 => FieldDetail::DoubleWord,
-			11 => FieldDetail::FileName,
-			12 => FieldDetail::Float,
-			13 => FieldDetail::Float2,
-			14 => FieldDetail::Float3,
-			15 => FieldDetail::Float4,
-			16 | 20 | 29 => {
+			FT::Reference | FT::Inline | FT::StructCommon => {
 				let offset = input.eat_rva_as_offset(&self.exe)?;
 				let inner = self.parse_type(&mut self.exe.reader_from_offset(offset)?)?;
-				holds_input_references = inner.holds_input_references;
 				match _type {
-					16 => FieldDetail::Reference    { inner },
-					20 => FieldDetail::Inline       { inner },
-					29 => FieldDetail::StructCommon { inner },
+					FT::Reference    => Type::Reference { inner: Box::new(inner), kind: ReferenceKind::Default },
+					FT::Inline       => Type::Reference { inner: Box::new(inner), kind: ReferenceKind::Inline },
+					FT::StructCommon => Type::Reference { inner: Box::new(inner), kind: ReferenceKind::StructCommon },
 					_ => unreachable!()
 				}
 			},
-			17 => FieldDetail::QuadWord,
-			18 => FieldDetail::WideCString,
-			19 => FieldDetail::CString,
-			21 => FieldDetail::Word,
-			22 => FieldDetail::UUID,
-			23 => FieldDetail::Byte3,
-			24 => FieldDetail::DoubleWord2,
-			25 => FieldDetail::DoubleWord4,
-			26 => FieldDetail::DoubleWord3,
-			27 => FieldDetail::FileRef,
-			28 => {
+			FT::Variant => {
 				let offset = input.eat_rva_as_offset(&self.exe)?;
 				let size = input.eat_u64()? as usize;
 
 				let input = &mut self.exe.reader_from_offset(offset)?;
+				let mut holds_input_references = false;
 				let mut variants = Vec::with_capacity(size);
 				for _i in 0..size {
 					let variant_offset = input.eat_rva_as_offset(&self.exe)?;
 					let input = &mut self.exe.reader_from_offset(variant_offset)?;
 					let inner = self.parse_type(input)?;
-					holds_input_references |= inner.holds_input_references;	
+					holds_input_references |= inner.holds_input_references();
 					variants.push(inner);
 				}
-				FieldDetail::Variant { variants }
+				Type::Variant { variants, holds_input_references }
 			},
-			num => return Err(Error::InvalidFieldType { num })
+			FT::End => return Ok(FieldParseResult::TypeName(name)),
 		};
 
-		Ok(Field { name, detail, holds_input_references })
+		Ok(FieldParseResult::Field(Field { name, _type }))
 	}
+}
+
+/// The last field in a type contains its name and terminates field iteration
+pub enum FieldParseResult<'a> {
+	Field(Field<'a>),
+	TypeName(&'a str),
+}
+
+macro_rules! impl_try_from {
+	{ enum $type:ident { $($name:ident = $value:literal),* $(,)? } } => {
+		enum $type {
+			$($name = $value),*
+		}
+
+		impl TryFrom<u16> for $type {
+			type Error = Error;
+		
+			fn try_from(value : u16) -> std::prelude::v1::Result<Self, Self::Error> {
+				match value {
+					$($value => Ok($type::$name)),*,
+					num => Err(Error::InvalidFieldType { num }),
+				}
+			}
+		}
+	}
+}
+
+impl_try_from! {
+enum BuiltinFieldType {
+	End          =  0,
+	FixedArray   =  1,
+	Array        =  2,
+	PtrArray     =  3,
+	Byte         =  5,
+	Byte4        =  6,
+	Double       =  7,
+	DWord        = 10,
+	FileName     = 11,
+	Float        = 12,
+	Float2       = 13,
+	Float3       = 14,
+	Float4       = 15,
+	Reference    = 16,
+	QWord        = 17,
+	WideCString     = 18,
+	CString      = 19,
+	Inline       = 20,
+	Word         = 21,
+	UUID         = 22,
+	Byte3        = 23,
+	DWord2       = 24,
+	DWord4       = 25,
+	Word3        = 26,
+	FileRef      = 27,
+	Variant      = 28,
+	StructCommon = 29,
+	SmallArray   = 33,
+}
 }
 
 struct Reader<'a> {
@@ -310,4 +383,4 @@ impl<'a> PE<'a> {
 
 
 use std::{collections::HashSet, mem::MaybeUninit, str::{from_utf8, from_utf8_unchecked}};
-use crate::{structure::{Chunk, Field, FieldDetail, SpecificChunkVersion, Type}, Error, Result};
+use crate::{structure::{ArrayKind, Chunk, Field, ReferenceKind, SpecificChunkVersion, Type}, Error, Result};
