@@ -59,15 +59,17 @@ fn extract_asnd(data : &[u8]) {
 			let asnd_chunk = chunk.unwrap();
 
 			let mp3 = asnd_chunk.audio_data;
+			let ext;
 			if &mp3[..2] != &[0xff, 0xfb] {
 				println!("vid: {}/{i}, unknown format {:x?}", asnd_file.voice_id, &mp3[..2]);
-				continue 
+				ext = "bin";
 			}
 			else {
 				println!("vid: {}/{i} OFlg: {:b}, IFlg: {:b}, Form: {}, Bytes: {:x?}", asnd_file.voice_id, asnd_file.flags, asnd_chunk.flags, asnd_chunk.format, &asnd_chunk.audio_data[..2]);
+				ext = "mp3";
 			}
 			
-			let dst_file = &mut std::fs::File::options().create(true).truncate(true).write(true).open(format!("tests/out/{}_{}.mp3", asnd_file.voice_id, i)).unwrap();
+			let dst_file = &mut std::fs::File::options().create(true).truncate(true).write(true).open(format!("tests/out/{}_{i}.{ext}", asnd_file.voice_id)).unwrap();
 			use std::io::Write;
 			dst_file.write_all(mp3).unwrap();
 		}
