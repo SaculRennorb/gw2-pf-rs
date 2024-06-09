@@ -19,33 +19,33 @@ pub struct RecursiveTypeReferences<'a, 'b> {
 impl<'a, 'b> RecursiveTypeReferences<'a, 'b> {
 	pub fn new_with_seed(seed_type : &'b Type<'a>) -> Self {
 		let mut me = Self{ queue: Vec::new(), already_exported: HashSet::new() };
-		me.append(seed_type);
-		me.append_children(seed_type);
+		me.append_recursive(seed_type);
 		me
 	}
 
-	fn append_children(&mut self, _type : &'b Type<'a>) {
+	pub fn len(&self) -> usize { self.queue.len() }
+
+	fn append_recursive(&mut self, _type : &'b Type<'a>) {
 		match _type {
 				Type::Reference { inner, .. } |
 				Type::Array { inner, .. } => {
 					if !is_primitive_type(inner) {
-						self.append(inner);
-						self.append_children(inner);
+						self.append_recursive(inner);
 					}
 				}
 				Type::Variant { variants, .. } => {
+					self.append(_type);
 					for inner in variants {
 						if !is_primitive_type(inner) {
-							self.append(inner);
-							self.append_children(inner);
+							self.append_recursive(inner);
 						}
 					}
 				}
 				Type::Composite { fields, .. } =>  {
+					self.append(_type);
 					for field in fields {
 						if !is_primitive_type(field) {
-							self.append(field);
-							self.append_children(field);
+							self.append_recursive(field);
 						}
 					}
 				},
@@ -118,7 +118,8 @@ pub fn export_type<'a>(_type : &Type<'a>, fmt : &mut Formatter) -> FmtResult {
 			}
 			fmt.write_str("}\n")
 		},
-		_=> Ok(()),
+		
+		other => fmt.write_fmt(format_args!("{other:#?}\n")),
 	}
 	
 }
@@ -164,7 +165,7 @@ fn format_type_name<'a>(_type : &Type<'a>) -> Cow<'a, str> {
 	}
 }
 
-pub fn add_required_imports_for_type<'a>(imports : &mut HashSet<&'a str>, _type : &Type<'a>) {
+pub fn add_required_imports_for_type_recursive<'a>(imports : &mut HashSet<&'a str>, _type : &Type<'a>) {
 	match _type {
 		Type::FileName => { imports.insert("FileName"); },
 		Type::FileRef  => { imports.insert("FileRef"); },
@@ -172,15 +173,15 @@ pub fn add_required_imports_for_type<'a>(imports : &mut HashSet<&'a str>, _type 
 		Type::CString { wide: true }  => { imports.insert("WideCString"); },
 		Type::CString { wide: false } => { imports.insert("CString"); },
 		Type::Array { inner, .. } |
-		Type::Reference { inner, .. } => { add_required_imports_for_type(imports, inner) },
+		Type::Reference { inner, .. } => { add_required_imports_for_type_recursive(imports, inner) },
 		Type::Variant { variants, .. } => {
 			for variant in variants {
-				add_required_imports_for_type(imports, variant);
+				add_required_imports_for_type_recursive(imports, variant);
 			}
 		}
 		Type::Composite { fields, .. } =>  {
 			for field in fields {
-				add_required_imports_for_type(imports, field);
+				add_required_imports_for_type_recursive(imports, field);
 			}
 		},
 		_ => {},

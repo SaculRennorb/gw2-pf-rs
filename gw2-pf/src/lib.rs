@@ -1,7 +1,9 @@
 pub mod pf;
 pub mod formats;
-pub mod wstr;
-mod parse;
+pub mod parse;
+
+mod wstr; pub use wstr::WString;
+mod filename; pub use filename::FileName;
 
 use gw2_pf_rs_derive;
 pub(crate) use gw2_pf_rs_derive::Parse;

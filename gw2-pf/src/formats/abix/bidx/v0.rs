@@ -1,3 +1,5 @@
+use crate::FileName;
+
 #[derive(Debug, crate::Parse)]
 pub struct BankIndexData {
 	pub bank_language: Vec<BankLanguageData>,
@@ -10,5 +12,5 @@ pub struct BankLanguageData {
 
 #[derive(Debug, crate::Parse)]
 pub struct BankFileNameData {
-	pub file_name: Option<crate::wstr::WString>, // for now, could use cow or similar
+	pub file_name: Option<FileName>,
 }

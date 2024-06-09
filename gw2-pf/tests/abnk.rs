@@ -69,7 +69,7 @@ fn extract_asnd(data : &[u8]) {
 				ext = "mp3";
 			}
 			
-			let dst_file = &mut std::fs::File::options().create(true).truncate(true).write(true).open(format!("tests/out/{}_{i}.{ext}", asnd_file.voice_id)).unwrap();
+			let dst_file = &mut std::fs::File::options().create(true).truncate(true).write(true).open(format!("tests/out/sounds/{}_{i}.{ext}", asnd_file.voice_id)).unwrap();
 			use std::io::Write;
 			dst_file.write_all(mp3).unwrap();
 		}
