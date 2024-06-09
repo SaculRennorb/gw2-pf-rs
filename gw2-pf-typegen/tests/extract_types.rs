@@ -119,11 +119,10 @@ fn dump_all() {
 	for chunk in dut::analyze::locate_chunks(&data) {
 		let lower_chunk_magic = chunk.magic.to_lowercase();
 
-		let chunk_path = format!("tests/out/chunks/{lower_chunk_magic}");
+		let chunk_path = &format!("tests/out/chunks/{lower_chunk_magic}{}", chunk.versions.iter().map(|v| v.version).max().unwrap());
 		let chunk_file_path = format!("{chunk_path}/{lower_chunk_magic}.rs");
 		if std::path::Path::new(&chunk_file_path).exists() {
 			eprintln!("[warn] Path for chunk {} ({chunk_file_path}) already exists, skipping write.", chunk.magic);
-			continue;
 		}
 		else {
 			println!("{}", chunk.magic);
@@ -136,7 +135,7 @@ fn dump_all() {
 		
 
 		for version in chunk.versions {
-			let version_path = format!("tests/out/chunks/{lower_chunk_magic}/v{}.rs", version.version);
+			let version_path = format!("{chunk_path}/v{}.rs", version.version);
 			if std::path::Path::new(&version_path).exists() {
 				eprintln!("[warn] Path for version {} of chunk {} ({version_path}) already exists, skipping write.", version.version, chunk.magic);
 				continue;
