@@ -155,7 +155,7 @@ fn dump_all_rs() {
 }
 
 
-#[test]
+#[test] #[ignore = "produces files"]
 fn dump_all_odin() {
 	use dut::generate::odin as lang;
 	let out_path = "out_odin";

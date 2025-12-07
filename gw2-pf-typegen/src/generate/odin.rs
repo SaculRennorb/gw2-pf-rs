@@ -128,6 +128,9 @@ pub fn export_type_parser<'a>(_type : &Type<'a>, fmt : &mut Formatter) -> FmtRes
 
 	fn format_field_parse_expression<'a>(fmt: &mut Formatter, field: &Field<'a>) -> FmtResult {
 		match &field._type {
+			Type::Array { kind: ArrayKind::Inline { .. }, inner } if inner.is_compact() => {
+				fmt.write_fmt(format_args!("\tpf.read(reader, &destination.{})", format_member_name(field.name)))?;
+			},
 			Type::Array { inner, .. } if inner.is_compact() => {
 				fmt.write_fmt(format_args!("\tpf.read_slice_packed(reader, &destination.{})", format_member_name(field.name)))?;
 			},
