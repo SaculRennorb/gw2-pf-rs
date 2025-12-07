@@ -189,6 +189,8 @@ fn dump_all_odin() {
 				fmt.write_fmt(format_args!("v{} :: v{}.Chunk\n", version.version, version.version))?;
 			}
 
+			fmt.write_str("\n")?;
+
 			fmt.write_str("read :: proc(reader : ^pf.Reader, version : u32, destination : ^Chunk) -> (err : common.ParserError)\n")?;
 			fmt.write_str("{\n")?;
 			fmt.write_str("\tswitch(version) {")?;
