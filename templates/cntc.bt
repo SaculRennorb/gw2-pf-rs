@@ -1,0 +1,86 @@
+//------------------------------------------------
+//--- 010 Editor v11.0 Binary Template
+//
+//      File: 
+//   Authors: 
+//   Version: 
+//   Purpose: 
+//  Category: 
+// File Mask: 
+//  ID Bytes: 
+//   History: 
+//------------------------------------------------
+
+typedef uint64 Offset;
+#include "_pf.bt"
+
+struct PackContentTypeInfo {
+	u32 guid_offset      ;//: u32,
+	u32 uid_offset       ;//: u32,
+	u32 data_id_offset   ;//: u32,
+	u32 name_offset      ;//: u32,
+	u8 track_references ;//: byte,
+};
+
+struct PackContentNamespace {
+	Offset name         ;//: string16,
+	u32 domain       ;//: u32,
+	u32 parent_index ;//: u32, // is max(u32) for the root namespace
+};
+
+struct PackContentIndexEntry {
+	u32 type            ;//: u32, // index into 'type_infos' array of the chunk
+	u32 offset          ;//: u32, // index into 'content' array of the chunk
+	u32 namespace_index ;//: u32, // index into 'namespaces' array of the chunk
+	u32 root_index      ;//: u32,
+};
+
+struct PackContentLocalOffsetFixup {
+	u32 reloc_offset ;//: u32,
+};
+
+struct PackContentExternalOffsetFixup {
+	u32 reloc_offset      ;//: u32,
+	u32 target_file_index ;//: u32,
+};
+
+struct PackContentFileIndexFixup {
+	u32 reloc_offset ;//: u32,
+};
+
+struct PackContentStringIndexFixup {
+	u32 reloc_offset ;//: u32,
+};
+
+struct PackContentTrackedReference {
+	u32 source_offset ;//: u32,
+	u32 target_file_index ;//: u32,
+	u32 target_offset ;//: u32,
+};
+
+struct PackContent {
+	u32 flags                ;//:   u32,
+	Array type_infos         ;//: []PackContentTypeInfo,
+	Array namespaces         ;//: []PackContentNamespace,
+	Array file_refs          ;//: []pf.FileRef,
+	Array index_entries      ;//: []PackContentIndexEntry,
+	Array local_offsets      ;//: []PackContentLocalOffsetFixup,
+	Array external_offsets   ;//: []PackContentExternalOffsetFixup,
+	Array file_indices       ;//: []PackContentFileIndexFixup,
+	Array string_indices     ;//: []PackContentStringIndexFixup,
+	Array tracked_references ;//: []PackContentTrackedReference,
+	Array strings            ;//: []string16,
+	Array content            ;//: []byte,
+};
+
+
+
+
+
+PackContent chunk;
+
+FSeek(startof(chunk.type_infos.offset) + chunk.type_infos.offset);
+local int i;
+for(i = 0; i < chunk.type_infos.length; i++) {
+    PackContentTypeInfo ti;
+}

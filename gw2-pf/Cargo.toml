@@ -6,5 +6,8 @@ edition = "2021"
 [dependencies]
 gw2-pf-rs-derive = { path = "../gw2-pf-derive" }
 
+[dev-dependencies]
+rust-crypto = "^0.2"
+
 [features]
 debug-parsing = []

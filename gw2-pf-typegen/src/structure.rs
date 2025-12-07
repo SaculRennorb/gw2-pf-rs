@@ -58,11 +58,31 @@ impl<'a> Type<'a> {
 		match self {
 			Type::CString {..} => true,
 			Type::Reference { inner, .. } => inner.holds_input_references(),
-			//NOTE(Rennorb): Byte arrays should not be copied over, their derserialize should just hold a pointer to the original data. 
+			//NOTE(Rennorb): Byte arrays should not be copied over, their deserialize should just hold a pointer to the original data. 
 			Type::Array { inner, .. }  => matches!(inner.as_ref(), Type::U8) || inner.holds_input_references(),
 			Type::Variant { holds_input_references, .. } |
 			Type::Composite { holds_input_references, .. } => *holds_input_references,
 			_ => false,
+		}
+	}
+
+	pub fn is_compact(&self) -> bool {
+		match self {
+			Type::FileName => false,
+			Type::FileRef  => false,
+			Type::CString     { .. } => false,
+			Type::Reference   { .. } => false, // maybe ? 
+			Type::Array { kind: ArrayKind::Inline { .. }, inner } |
+			Type::Array { kind: ArrayKind::Fixed { .. }, inner } => inner.is_compact(),
+			Type::Array { .. } => false,
+			Type::Variant     { .. } => false,
+			Type::Composite   { fields, .. } => {
+				for field in fields {
+					if !field._type.is_compact() { return false }
+				}
+				true
+			},
+			_ => true,
 		}
 	}
 }

@@ -237,7 +237,7 @@ impl<'inp, V : ParseMagicVariant<'inp>> Iterator for ChunkIter<'inp, V> {
 		let chunk_data = &self.input.remaining[chunk_header.chunk_header_size as usize..][..chunk_header.descriptor_offset as usize];
 		let chunk_input = &mut Input { remaining: chunk_data, is_64_bit: self.input.is_64_bit };
 
-		let next_offset = 8 + chunk_header.next_chunk_offset as usize;  // no clue where the +8 comes from
+		let next_offset = 8 + chunk_header.next_chunk_offset as usize;  // +8 = after "offset" field
 		if next_offset <= self.input.remaining.len() { self.input.remaining = &self.input.remaining[next_offset..]; }
 		
 		Some(V::parse(chunk_header.magic, chunk_header.version, chunk_input))
