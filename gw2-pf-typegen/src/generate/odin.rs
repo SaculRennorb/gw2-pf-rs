@@ -112,7 +112,7 @@ pub fn export_type<'a>(_type : &Type<'a>, fmt : &mut Formatter) -> FmtResult {
 
 		Type::Variant { variants, .. } => {
 			fmt.write_str(&get_variant_type_name(_type))?;
-			fmt.write_str(" enum :: {\n")?;
+			fmt.write_str(" :: union {\n")?;
 			for field in variants {
 				fmt.write_fmt(format_args!("\t{},\n", format_type_name(field)))?;
 			}
@@ -163,11 +163,26 @@ pub fn export_type_parser<'a>(_type : &Type<'a>, fmt : &mut Formatter) -> FmtRes
 		},
 
 		Type::Variant { variants, .. } => {
-			fmt.write_str(&get_variant_type_name(_type))?;
-			fmt.write_str(" enum :: {\n")?;
-			for field in variants {
-				fmt.write_fmt(format_args!("\t{},\n", format_type_name(field)))?;
+			let name = get_variant_type_name(_type);
+			fmt.write_fmt(format_args!("read_{name} :: proc(reader : ^pf.Reader, destination : ^{name}) -> (ok : bool)\n{{\n"))?;
+			fmt.write_str("\ttag, variant_reader := pf.read_variant_tag(reader) or_return\n")?;
+			fmt.write_str("\tswitch(tag) {\n")?;
+			let variants_might_need_alignemnt = variants.len() > 9;
+			for (i, variant) in variants.iter().enumerate() {
+				let vpad = if variants_might_need_alignemnt && i < 10 { " " } else { "" };
+				fmt.write_fmt(format_args!("\t\tcase {vpad}{i}: variant : {}; if pf.read(&variant_reader, ) {{ destination^ =  variant; return }},\n", format_type_name(variant)))?;
 			}
+			fmt.write_str(r#"		case:
+			return common.UnknownVersion {
+				offset = u64(uintptr(reader.cursor) - uintptr(reader.begin)),
+				actual = version,
+			}
+	}
+
+	return common.OutOfData { offset = u64(uintptr(reader.cursor) - uintptr(reader.begin)) }
+}
+"#)?;
+			fmt.write_str("\t}\n")?;
 			fmt.write_str("}\n")
 		},
 		

@@ -193,7 +193,7 @@ fn dump_all_odin() {
 
 			fmt.write_str("read :: proc(reader : ^pf.Reader, version : u32, destination : ^Chunk) -> (err : common.ParserError)\n")?;
 			fmt.write_str("{\n")?;
-			fmt.write_str("\tswitch(version) {")?;
+			fmt.write_str("\tswitch(version) {\n")?;
 			let has_versions_needing_padding = self.0.versions.iter().any(|v| v.version < 10) && self.0.versions.iter().any(|v| v.version >= 10);
 			for version in &self.0.versions {
 				let vpad = if has_versions_needing_padding && version.version < 10 { " " } else { "" };
@@ -222,6 +222,13 @@ fn dump_all_odin() {
 			fmt.write_fmt(format_args!("Chunk :: {}\n\n", lang::format_type_name(&self.1.root)))?;
 
 			let linked_nonprimitive_types = &mut lang::RecursiveTypeReferences::new_with_seed(&self.1);
+
+			fmt.write_str("read :: proc { ")?;
+			for _type in linked_nonprimitive_types.iter() {
+				fmt.write_fmt(format_args!("read_{}, ", lang::format_type_name(_type)))?;
+			}
+			fmt.write_str("}\n\n")?;
+
 			for _type in linked_nonprimitive_types.iter() {
 				lang::export_type(_type, fmt)?;
 				fmt.write_str("\n")?;

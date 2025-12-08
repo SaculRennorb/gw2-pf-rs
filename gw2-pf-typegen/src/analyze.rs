@@ -17,8 +17,8 @@ impl<'a> std::iter::Iterator for Parser<'a> {
 	type Item = Chunk<'a>;
 
 	fn next(&mut self) -> Option<Self::Item> {
-		const ASCII_HI_BITS : u8 = 0b01000000;
-		const ASCII_MASK    : u8 = 0b11000000;
+		const ASCII_HI_BITS : u8 = 0b00000000;
+		const ASCII_MASK    : u8 = 0b10000000;
 		// four ascii bytes, e.g. ABIX, and u32 version that realistically doesn't use more than the first byte
 		const TARGET : u64 = u64::from_le_bytes([ASCII_HI_BITS, ASCII_HI_BITS, ASCII_HI_BITS, ASCII_HI_BITS, 0, 0, 0, 0]);
 		const MASK   : u64 = u64::from_le_bytes([ASCII_MASK, ASCII_MASK, ASCII_MASK, ASCII_MASK, 0, 0xff, 0xff, 0xff]);
@@ -27,16 +27,21 @@ impl<'a> std::iter::Iterator for Parser<'a> {
 			let value = u64::from_le_bytes(chunk.try_into().unwrap());
 			if value & MASK == TARGET {
 				// unfortunately we will catch a lot of special characters with just a mask match, so we filter for ascii chars again
+				const _0 : u8 = '0' as u8;
+				const _9 : u8 = '9' as u8;
 				const _A : u8 = 'A' as u8;
 				const _Z : u8 = 'Z' as u8;
 				#[allow(non_upper_case_globals)]
 				const _a : u8 = 'a' as u8;
 				#[allow(non_upper_case_globals)]
 				const _z : u8 = 'z' as u8;
-				if (&chunk[..4]).iter().all(|c| matches!(*c, _A..=_Z | _a..=_z)) {
-					if let Ok((chunk, len)) = self.parse_chunk(&mut Reader { remaining: self.remaining_bytes }) {
-						self.remaining_bytes = &self.remaining_bytes[len..];
-						return Some(chunk)
+				if (&chunk[..4]).iter().all(|c| matches!(*c, 0 | _0..=_9 | _A..=_Z | _a..=_z)) {
+					match self.parse_chunk(&mut Reader { remaining: self.remaining_bytes }) {
+						Ok((chunk, len)) => {
+							self.remaining_bytes = &self.remaining_bytes[len..];
+							return Some(chunk)
+						},
+						_=> {},
 					}
 				}
 			}
@@ -59,6 +64,8 @@ impl<'a> Parser<'a> {
 		};
 
 		let n_versions = input.eat_u32()?;
+		if n_versions == 0 { return Err(Error::NoChunks) }
+
 		let meta_offset = input.eat_rva_as_offset(&self.exe)?;
 
 		if !self.chunk_cache.insert(ChunkIdentifier { magic, max_version: n_versions, meta_offset }) {
