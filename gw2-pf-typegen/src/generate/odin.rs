@@ -124,6 +124,93 @@ pub fn export_type<'a>(_type : &Type<'a>, fmt : &mut Formatter) -> FmtResult {
 	
 }
 
+pub fn export_type_measure<'a>(_type : &Type<'a>, fmt : &mut Formatter) -> FmtResult {
+
+	fn has_inner_size<'a>(field: &Field<'a>) -> bool {
+		match &field._type {
+			Type::Array { kind: ArrayKind::Inline { .. }, inner } if inner.is_compact() => false,
+			Type::Array { inner, .. } if inner.is_compact() => true,
+			Type::Array { .. } => true,
+			_ => false,
+		}
+	}
+
+	fn format_field_parse_expression<'a>(fmt: &mut Formatter, type_name : &str, field: &Field<'a>) -> FmtResult {
+		match &field._type {
+			Type::Array { kind: ArrayKind::Inline { .. }, inner } if inner.is_compact() => {
+				fmt.write_fmt(format_args!("pf.measure_memory_requirement(reader, type_of({type_name}{{}}.{}))", format_member_name(field.name)))?;
+			},
+			Type::Array { inner, .. } if inner.is_compact() => {
+				fmt.write_fmt(format_args!("pf.measure_memory_requirement_slice_packed(reader, type_of({type_name}{{}}.{}), required_memory)", format_member_name(field.name)))?;
+			},
+			Type::Array { inner, .. } => {
+				fmt.write_fmt(format_args!("pf.measure_memory_requirement(reader, type_of({type_name}{{}}.{}), measure_memory_requirement_{}, required_memory)", format_member_name(field.name), format_type_name(inner)))?;
+			},
+			Type::Reference { kind, inner } => {
+				fmt.write_fmt(format_args!("pf.measure_memory_requirement(reader, type_of({type_name}{{}}.{}), measure_memory_requirement_{}, required_memory)", format_member_name(field.name), format_type_name(inner)))?;
+			},
+			_ => {
+				fmt.write_fmt(format_args!("pf.measure_memory_requirement(reader, type_of({type_name}{{}}.{}))", format_member_name(field.name)))?;
+			},
+		}
+		Ok(())
+	}
+
+	match _type {
+		Type::Composite { name, fields, .. } => {
+			fmt.write_fmt(format_args!("measure_memory_requirement_{name} :: proc(reader : ^pf.Reader, required_memory : ^uint) -> (err : common.ParserError)\n{{\n"))?;
+			if fields.len() == 1 {
+				if has_inner_size(&fields[0]) {
+					fmt.write_str( "\treturn ")?;
+					format_field_parse_expression(fmt, name, &fields[0])?;
+					fmt.write_char('\n')?;
+				}
+				else {
+					fmt.write_char('\t')?;
+					format_field_parse_expression(fmt, name, &fields[0])?;
+					fmt.write_str( " or_return\n\treturn\n")?;
+				}
+			}
+			else {
+				for field in fields.iter() {
+					fmt.write_char('\t')?;
+					format_field_parse_expression(fmt, name, field)?;
+					fmt.write_str(" or_return\n")?;
+				}
+				fmt.write_str("\treturn\n")?;
+			}
+			fmt.write_str("}\n")
+		},
+
+		Type::Variant { variants, .. } => {
+			let name = get_variant_type_name(_type);
+			fmt.write_fmt(format_args!("measure_memory_requirement_{name} :: proc(reader : ^pf.Reader, required_memory : ^uint) -> (err : common.ParserError)\n{{\n"))?;
+			fmt.write_str("\ttag, variant_reader := pf.read_variant_tag(reader) or_return\n")?;
+			fmt.write_str("\tswitch(tag) {\n")?;
+			let variants_might_need_alignemnt = variants.len() > 9;
+			for (i, variant) in variants.iter().enumerate() {
+				let vpad = if variants_might_need_alignemnt && i < 10 { " " } else { "" };
+				fmt.write_fmt(format_args!("\t\tcase {vpad}{i}: pf.measure_memory_requirement_{}(&variant_reader, required_memory)\n", format_type_name(variant)))?;
+			}
+			fmt.write_str(r#"		case:
+			return common.UnknownVersion {
+				offset = u64(uintptr(reader.cursor) - uintptr(reader.begin)),
+				actual = version,
+			}
+	}
+
+	return common.OutOfData { offset = u64(uintptr(reader.cursor) - uintptr(reader.begin)) }
+}
+"#)?;
+			fmt.write_str("\t}\n")?;
+			fmt.write_str("}\n")
+		},
+		
+		other => fmt.write_fmt(format_args!("{other:#?}\n")),
+	}
+	
+}
+
 pub fn export_type_parser<'a>(_type : &Type<'a>, fmt : &mut Formatter) -> FmtResult {
 
 	fn format_field_parse_expression<'a>(fmt: &mut Formatter, field: &Field<'a>) -> FmtResult {
@@ -146,40 +233,28 @@ pub fn export_type_parser<'a>(_type : &Type<'a>, fmt : &mut Formatter) -> FmtRes
 
 	match _type {
 		Type::Composite { name, fields, .. } => {
-			fmt.write_fmt(format_args!("read_{name} :: proc(reader : ^pf.Reader, destination : ^{name}) -> (ok : bool)\n{{\n"))?;
-			if fields.len() == 1 {
-				fmt.write_str("\treturn ")?;
-				format_field_parse_expression(fmt, &fields[0])?;
+			fmt.write_fmt(format_args!("read_{name} :: proc(reader : ^pf.AllocatingReader, destination : ^{name})\n{{\n"))?;
+			for field in fields.iter() {
+				format_field_parse_expression(fmt, field)?;
 				fmt.write_char('\n')?;
-			}
-			else {
-				for field in fields.iter() {
-					format_field_parse_expression(fmt, field)?;
-					fmt.write_str(" or_return\n")?;
-				}
-				fmt.write_str("\treturn true\n")?;
 			}
 			fmt.write_str("}\n")
 		},
 
 		Type::Variant { variants, .. } => {
 			let name = get_variant_type_name(_type);
-			fmt.write_fmt(format_args!("read_{name} :: proc(reader : ^pf.Reader, destination : ^{name}) -> (ok : bool)\n{{\n"))?;
-			fmt.write_str("\ttag, variant_reader := pf.read_variant_tag(reader) or_return\n")?;
+			fmt.write_fmt(format_args!("read_{name} :: proc(reader : ^pf.AllocatingReader, destination : ^{name})\n{{\n"))?;
+			fmt.write_str("\ttag, variant_reader := pf.read_variant_tag(reader)\n")?;
 			fmt.write_str("\tswitch(tag) {\n")?;
 			let variants_might_need_alignemnt = variants.len() > 9;
 			for (i, variant) in variants.iter().enumerate() {
 				let vpad = if variants_might_need_alignemnt && i < 10 { " " } else { "" };
 				fmt.write_fmt(format_args!("\t\tcase {vpad}{i}: variant : {}; if pf.read(&variant_reader, ) {{ destination^ =  variant; return }},\n", format_type_name(variant)))?;
 			}
-			fmt.write_str(r#"		case:
-			return common.UnknownVersion {
-				offset = u64(uintptr(reader.cursor) - uintptr(reader.begin)),
-				actual = version,
-			}
+			fmt.write_str(r#"
 	}
 
-	return common.OutOfData { offset = u64(uintptr(reader.cursor) - uintptr(reader.begin)) }
+	unreachable()
 }
 "#)?;
 			fmt.write_str("\t}\n")?;
@@ -205,7 +280,7 @@ pub fn format_type_name<'a>(_type : &Type<'a>) -> Cow<'a, str> {
 		Type::UUID     => Cow::Borrowed("UUID"),
 		Type::CString { wide: false } => Cow::Borrowed("string"), //turn into annotations?
 		Type::CString { wide: true  } => Cow::Borrowed("string16"), //turn into annotations?
-		Type::Reference { inner, kind: ReferenceKind::Optional } => Cow::Owned(format!("Maybe({})", format_type_name(inner))),
+		Type::Reference { inner, kind: ReferenceKind::Optional } => Cow::Owned(format!("Maybe(^{})", format_type_name(inner))),
 		Type::Reference { inner, .. } => format_type_name(inner),
 		Type::Array { inner, kind: ArrayKind::Inline { size } } => Cow::Owned(format!("[{size}]{}", format_type_name(inner))),
 		Type::Array { inner, kind: ArrayKind::Fixed { size } } => Cow::Owned(format!("[{size}]{}", format_type_name(inner))),
@@ -234,8 +309,8 @@ pub fn get_variant_type_name(_variant : &Type) -> String {
 }
 
 pub fn format_member_name<'a>(raw_name : &'a str) -> Cow<'a, str> {
-	stringify!(type);
-	let reserved = match raw_name {
+	let case_converted = convert_case::ccase!(camel -> snake, raw_name);
+	let reserved = match case_converted {
 		//"import"      => "import_",
 		//"foreign"     => "foreign_",
 		//"package"     => "package_",
@@ -279,8 +354,7 @@ pub fn format_member_name<'a>(raw_name : &'a str) -> Cow<'a, str> {
 		//"matrix"      => "matrix_",
 
 		other => {
-			//could do case reformatting here
-			return Cow::Borrowed(other);
+			return Cow::Owned(other);
 		}
 	};
 

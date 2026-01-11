@@ -155,7 +155,7 @@ fn dump_all_rs() {
 }
 
 
-#[test] #[ignore = "produces files"]
+#[test]
 fn dump_all_odin() {
 	use dut::generate::odin as lang;
 	let out_path = "out_odin";
@@ -170,10 +170,9 @@ fn dump_all_odin() {
 	struct CWrapper<'a, 'b>(&'b dut::structure::Chunk<'a>);
 	impl std::fmt::Display for CWrapper<'_, '_> {
 		fn fmt(&self, fmt : &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-			fmt.write_fmt(format_args!("package gw2_pf_REPLACE_ME_chunks_{};\n\n", self.0.magic))?;
-			fmt.write_str("import \"base:runtime\"\n")?;
+			fmt.write_fmt(format_args!("package gw2_pf_REPLACE_ME_chunks_{}\n\n", self.0.magic))?;
 			fmt.write_str("import common \"../../../../../\"\n")?;
-			fmt.write_str("import pf \"../../../../\"\n")?;
+			fmt.write_str("import pf     \"../../../../\"\n")?;
 			for (i, version) in self.0.versions.iter().enumerate() {
 				if i > 0 { fmt.write_str("; ")?; }
 				fmt.write_fmt(format_args!("import \"v{}\"", version.version))?;
@@ -191,13 +190,13 @@ fn dump_all_odin() {
 
 			fmt.write_str("\n")?;
 
-			fmt.write_str("read :: proc(reader : ^pf.Reader, version : u32, destination : ^Chunk) -> (err : common.ParserError)\n")?;
+			fmt.write_str("measure_memory_requirement :: proc(reader : ^pf.Reader, version : u32, required_memory : ^uint) -> (err : common.ParserError)\n")?;
 			fmt.write_str("{\n")?;
 			fmt.write_str("\tswitch(version) {\n")?;
 			let has_versions_needing_padding = self.0.versions.iter().any(|v| v.version < 10) && self.0.versions.iter().any(|v| v.version >= 10);
 			for version in &self.0.versions {
 				let vpad = if has_versions_needing_padding && version.version < 10 { " " } else { "" };
-				fmt.write_fmt(format_args!("\t\tcase {vpad}{ver}: chunk : {vpad}v{ver}.Chunk; if {vpad}v{ver}.read(reader, &chunk) {{ destination^ = chunk; return }}\n", ver = version.version))?;
+				fmt.write_fmt(format_args!("\t\tcase {vpad}{ver}: return {vpad}v{ver}.measure_memory_requirement(reader, required_memory)\n", ver = version.version))?;
 			}
 			fmt.write_str(r#"		case:
 			return common.UnknownVersion {
@@ -208,7 +207,18 @@ fn dump_all_odin() {
 
 	return common.OutOfData { offset = u64(uintptr(reader.cursor) - uintptr(reader.begin)) }
 }
+
 "#)?;
+
+			fmt.write_str("read :: proc(reader : ^pf.AllocatingReader, version : u32, destination : ^Chunk)\n")?;
+			fmt.write_str("{\n")?;
+			fmt.write_str("\tswitch(version) {\n")?;
+			let has_versions_needing_padding = self.0.versions.iter().any(|v| v.version < 10) && self.0.versions.iter().any(|v| v.version >= 10);
+			for version in &self.0.versions {
+				let vpad = if has_versions_needing_padding && version.version < 10 { " " } else { "" };
+				fmt.write_fmt(format_args!("\t\tcase {vpad}{ver}: chunk : {vpad}v{ver}.Chunk; {vpad}v{ver}.read(reader, &chunk); destination^ = chunk\n", ver = version.version))?;
+			}
+			fmt.write_str("\t}\n}\n")?;
 
 			Ok(())
 		}
@@ -217,17 +227,16 @@ fn dump_all_odin() {
 	struct VWrapper<'a>(&'a str, dut::structure::SpecificChunkVersion<'a>);
 	impl std::fmt::Display for VWrapper<'_> {
 		fn fmt(&self, fmt : &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-			fmt.write_fmt(format_args!("package gw2_pf_REPLACE_ME_chunks_{}_v{};\n\n", self.0, self.1.version))?;
-			fmt.write_str("import pf \"../../../../../\"\n\n")?;
+			fmt.write_fmt(format_args!("package gw2_pf_REPLACE_ME_chunks_{}_v{}\n\n", self.0, self.1.version))?;
+			fmt.write_str("import common \"../../../../../../\"\n")?;
+			fmt.write_str("import pf     \"../../../../../\"\n\n")?;
 			fmt.write_fmt(format_args!("Chunk :: {}\n\n", lang::format_type_name(&self.1.root)))?;
 
 			let linked_nonprimitive_types = &mut lang::RecursiveTypeReferences::new_with_seed(&self.1);
 
-			fmt.write_str("read :: proc { ")?;
-			for _type in linked_nonprimitive_types.iter() {
-				fmt.write_fmt(format_args!("read_{}, ", lang::format_type_name(_type)))?;
-			}
-			fmt.write_str("}\n\n")?;
+			let root_type_name = lang::format_type_name(&self.1);
+			fmt.write_fmt(format_args!("measure_memory_requirement :: measure_memory_requirement_{root_type_name}\n"))?;
+			fmt.write_fmt(format_args!("read :: read_{root_type_name}\n\n"))?;
 
 			for _type in linked_nonprimitive_types.iter() {
 				lang::export_type(_type, fmt)?;
@@ -235,6 +244,8 @@ fn dump_all_odin() {
 			}
 
 			for (i, _type) in linked_nonprimitive_types.iter().enumerate() {
+				lang::export_type_measure(_type, fmt)?;
+				fmt.write_str("\n")?;
 				lang::export_type_parser(_type, fmt)?;
 				if i != linked_nonprimitive_types.len() - 1 { fmt.write_str("\n")?; }
 			}
@@ -245,7 +256,7 @@ fn dump_all_odin() {
 
 
 	for chunk in dut::analyze::locate_chunks(&data) {
-		let chunk_path = &format!("tests/{out_path}/chunks/{}{}", chunk.magic, chunk.versions.iter().map(|v| v.version).max().unwrap());
+		let chunk_path = &format!("tests/{out_path}/chunks/{}_{}_{}", chunk.magic, to_hex(chunk.magic.as_bytes()), chunk.versions.iter().map(|v| v.version).max().unwrap());
 		let chunk_file_path = format!("{chunk_path}/{}.odin", chunk.magic);
 		if std::path::Path::new(&chunk_file_path).exists() {
 			eprintln!("[warn] Path for chunk {} ({chunk_file_path}) already exists, skipping write.", chunk.magic);
@@ -278,4 +289,14 @@ fn dump_all_odin() {
 
 		println!();
 	}
+}
+
+fn to_hex(bytes : &[u8]) -> String {
+	use std::fmt::Write;
+
+	let mut o = String::with_capacity(bytes.len() * 2);
+	for b in bytes {
+		_ = write!(&mut o, "{b:02x}")
+	}
+	return o
 }
